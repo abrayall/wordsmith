@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # Wordsmith Install Script
 # Builds locally if in git repo, otherwise downloads from GitHub releases
@@ -7,10 +7,14 @@ set -e
 
 # Colors
 GREEN='\033[0;32m'
-BLUE='\033[38;5;69m'
+BLUE='\033[38;2;59;130;246m'
 WHITE='\033[1;37m'
 RED='\033[0;31m'
 NC='\033[0m'
+
+# Use printf for POSIX compatibility
+log() { printf "%b\n" "$1"; }
+log_err() { printf "%b\n" "$1" >&2; }
 
 REPO="abrayall/wordsmith"
 INSTALL_DIR="/usr/local/bin"
@@ -23,7 +27,7 @@ detect_platform() {
     case "$OS" in
         darwin) OS="darwin" ;;
         linux) OS="linux" ;;
-        *) echo -e "${RED}Unsupported OS: $OS${NC}"; exit 1 ;;
+        *) log_err "${RED}Unsupported OS: $OS${NC}"; exit 1 ;;
     esac
 
     case "$ARCH" in
@@ -31,7 +35,7 @@ detect_platform() {
         amd64) ARCH="amd64" ;;
         arm64) ARCH="arm64" ;;
         aarch64) ARCH="arm64" ;;
-        *) echo -e "${RED}Unsupported architecture: $ARCH${NC}"; exit 1 ;;
+        *) log_err "${RED}Unsupported architecture: $ARCH${NC}"; exit 1 ;;
     esac
 }
 
@@ -51,7 +55,7 @@ build_local() {
 
     BINARY=$(ls build/wordsmith-*-${OS}-${ARCH} 2>/dev/null | head -1)
     if [ -z "$BINARY" ]; then
-        echo -e "${RED}No binary found for ${OS}-${ARCH}${NC}" >&2
+        log_err "${RED}No binary found for ${OS}-${ARCH}${NC}"
         exit 1
     fi
 
@@ -60,24 +64,24 @@ build_local() {
 
 # Download from GitHub releases
 download_release() {
-    echo -e "${BLUE}Fetching latest release...${NC}" >&2
+    log_err "${BLUE}Fetching latest release...${NC}"
 
     # Get latest release tag
-    if command -v curl &> /dev/null; then
+    if command -v curl > /dev/null 2>&1; then
         LATEST=$(curl -sL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-    elif command -v wget &> /dev/null; then
+    elif command -v wget > /dev/null 2>&1; then
         LATEST=$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     else
-        echo -e "${RED}Error: curl or wget is required${NC}" >&2
+        log_err "${RED}Error: curl or wget is required${NC}"
         exit 1
     fi
 
     if [ -z "$LATEST" ]; then
-        echo -e "${RED}Failed to fetch latest release${NC}" >&2
+        log_err "${RED}Failed to fetch latest release${NC}"
         exit 1
     fi
 
-    echo -e "${BLUE}Latest version: ${WHITE}${LATEST}${NC}" >&2
+    log_err "${BLUE}Latest version: ${WHITE}${LATEST}${NC}"
     echo "" >&2
 
     # Construct download URL
@@ -89,18 +93,18 @@ download_release() {
     TMP_DIR=$(mktemp -d)
     BINARY="${TMP_DIR}/wordsmith"
 
-    echo -e "${BLUE}Downloading ${FILENAME}...${NC}" >&2
+    log_err "${BLUE}Downloading ${FILENAME}...${NC}"
 
     # Download binary
-    if command -v curl &> /dev/null; then
+    if command -v curl > /dev/null 2>&1; then
         if ! curl -sL -f -o "$BINARY" "$URL"; then
-            echo -e "${RED}Failed to download from ${URL}${NC}" >&2
+            log_err "${RED}Failed to download from ${URL}${NC}"
             rm -rf "$TMP_DIR"
             exit 1
         fi
     else
         if ! wget -q -O "$BINARY" "$URL"; then
-            echo -e "${RED}Failed to download from ${URL}${NC}" >&2
+            log_err "${RED}Failed to download from ${URL}${NC}"
             rm -rf "$TMP_DIR"
             exit 1
         fi
@@ -112,9 +116,9 @@ download_release() {
 
 # Install binary
 install_binary() {
-    local BINARY="$1"
+    BINARY="$1"
 
-    echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
+    log "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
 
     if [ -w "$INSTALL_DIR" ]; then
         cp "$BINARY" "$INSTALL_DIR/wordsmith"
@@ -137,12 +141,12 @@ fi
 install_binary "$BINARY"
 
 # Cleanup temp files if downloaded
-if [[ "$BINARY" == /tmp/* ]] || [[ "$BINARY" == */tmp.* ]]; then
-    rm -rf "$(dirname "$BINARY")"
-fi
+case "$BINARY" in
+    /tmp/*|*/tmp.*) rm -rf "$(dirname "$BINARY")" ;;
+esac
 
 echo ""
-echo -e "${GREEN}✓ Installed wordsmith to ${INSTALL_DIR}/wordsmith${NC}"
+log "${GREEN}✓ Installed wordsmith to ${INSTALL_DIR}/wordsmith${NC}"
 echo ""
 echo "Run 'wordsmith --help' to get started"
 echo ""

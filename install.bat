@@ -45,7 +45,7 @@ if not defined BINARY (
 goto :install
 
 :download_release
-echo [38;5;69mFetching latest release...[0m
+echo [38;2;59;130;246mFetching latest release...[0m
 
 :: Create temp directory
 set "TMP_DIR=%TEMP%\wordsmith-install-%RANDOM%"
@@ -60,7 +60,7 @@ if not defined LATEST (
     exit /b 1
 )
 
-echo [38;5;69mLatest version: [97m%LATEST%[0m
+echo [38;2;59;130;246mLatest version: [97m%LATEST%[0m
 echo.
 
 :: Remove 'v' prefix for filename
@@ -69,7 +69,7 @@ set "FILENAME=wordsmith-%VERSION%-windows-%ARCH%.exe"
 set "URL=https://github.com/%REPO%/releases/download/%LATEST%/%FILENAME%"
 set "BINARY=%TMP_DIR%\wordsmith.exe"
 
-echo [38;5;69mDownloading %FILENAME%...[0m
+echo [38;2;59;130;246mDownloading %FILENAME%...[0m
 
 :: Download using PowerShell
 powershell -NoProfile -Command "try { Invoke-WebRequest -Uri '%URL%' -OutFile '%BINARY%' -UseBasicParsing } catch { exit 1 }"
@@ -83,7 +83,7 @@ if %errorlevel% neq 0 (
 goto :install
 
 :install
-echo [38;5;69mInstalling to %INSTALL_DIR%...[0m
+echo [38;2;59;130;246mInstalling to %INSTALL_DIR%...[0m
 
 :: Create install directory if it doesn't exist
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
