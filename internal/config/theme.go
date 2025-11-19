@@ -8,21 +8,22 @@ import (
 	"strings"
 )
 
-// PluginConfig represents the plugin.properties configuration
-type PluginConfig struct {
+// ThemeConfig represents the theme.properties configuration
+type ThemeConfig struct {
 	Name        string
 	Version     string
 	Description string
 	Author      string
 	AuthorURI   string
-	PluginURI   string
+	ThemeURI    string
 	License     string
 	LicenseURI  string
-	Main        string
+	Main        string // Main stylesheet (style.css)
 	TextDomain  string
 	DomainPath  string
 	Requires    string
 	RequiresPHP string
+	Tags        string
 
 	// Additional files/directories to include (supports wildcards: *.php, **/*.php)
 	Include []string
@@ -30,27 +31,23 @@ type PluginConfig struct {
 	// Files/directories to exclude (supports wildcards)
 	Exclude []string
 
-	// Obfuscate PHP files
-	Obfuscate bool
-
 	// Minify CSS/JS files
 	Minify bool
 }
 
-// LoadPluginProperties loads plugin configuration from plugin.properties file
-func LoadPluginProperties(dir string) (*PluginConfig, error) {
-	path := filepath.Join(dir, "plugin.properties")
+// LoadThemeProperties loads theme configuration from theme.properties file
+func LoadThemeProperties(dir string) (*ThemeConfig, error) {
+	path := filepath.Join(dir, "theme.properties")
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open plugin.properties: %w", err)
+		return nil, fmt.Errorf("failed to open theme.properties: %w", err)
 	}
 	defer file.Close()
 
-	config := &PluginConfig{
-		Include:   []string{},
-		Exclude:   []string{},
-		Obfuscate: false,
-		Minify:    false,
+	config := &ThemeConfig{
+		Include: []string{},
+		Exclude: []string{},
+		Minify:  false,
 	}
 
 	scanner := bufio.NewScanner(file)
@@ -82,8 +79,8 @@ func LoadPluginProperties(dir string) (*PluginConfig, error) {
 			config.Author = value
 		case "author-uri":
 			config.AuthorURI = value
-		case "plugin-uri":
-			config.PluginURI = value
+		case "theme-uri":
+			config.ThemeURI = value
 		case "license":
 			config.License = value
 		case "license-uri":
@@ -98,6 +95,8 @@ func LoadPluginProperties(dir string) (*PluginConfig, error) {
 			config.Requires = value
 		case "requires-php":
 			config.RequiresPHP = value
+		case "tags":
+			config.Tags = value
 		case "include":
 			// Parse comma-separated list
 			items := strings.Split(value, ",")
@@ -116,15 +115,13 @@ func LoadPluginProperties(dir string) (*PluginConfig, error) {
 					config.Exclude = append(config.Exclude, item)
 				}
 			}
-		case "obfuscate":
-			config.Obfuscate = !(value == "false" || value == "no" || value == "0")
 		case "minify":
 			config.Minify = !(value == "false" || value == "no" || value == "0")
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading plugin.properties: %w", err)
+		return nil, fmt.Errorf("error reading theme.properties: %w", err)
 	}
 
 	// Validate required fields
@@ -132,15 +129,15 @@ func LoadPluginProperties(dir string) (*PluginConfig, error) {
 		return nil, fmt.Errorf("missing required field: name")
 	}
 	if config.Main == "" {
-		return nil, fmt.Errorf("missing required field: main")
+		config.Main = "style.css" // Default for themes
 	}
 
 	return config, nil
 }
 
-// PluginExists checks if plugin.properties exists in the directory
-func PluginExists(dir string) bool {
-	path := filepath.Join(dir, "plugin.properties")
+// ThemeExists checks if theme.properties exists in the directory
+func ThemeExists(dir string) bool {
+	path := filepath.Join(dir, "theme.properties")
 	_, err := os.Stat(path)
 	return err == nil
 }

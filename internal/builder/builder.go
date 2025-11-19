@@ -37,7 +37,7 @@ func (b *Builder) Build() error {
 	if !b.Quiet {
 		ui.PrintInfo("Loading plugin.properties...")
 	}
-	cfg, err := config.LoadProperties(b.SourceDir)
+	cfg, err := config.LoadPluginProperties(b.SourceDir)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
@@ -107,7 +107,13 @@ func (b *Builder) Build() error {
 		return fmt.Errorf("failed to copy main plugin file: %w", err)
 	}
 
-	for _, include := range b.Config.Include {
+	// Expand glob patterns in includes
+	expandedIncludes, err := ExpandIncludes(b.SourceDir, b.Config.Include, b.Config.Exclude)
+	if err != nil {
+		return fmt.Errorf("failed to expand include patterns: %w", err)
+	}
+
+	for _, include := range expandedIncludes {
 		src := filepath.Join(b.SourceDir, include)
 		info, err := os.Stat(src)
 		if err != nil {
@@ -116,7 +122,7 @@ func (b *Builder) Build() error {
 		}
 
 		if info.IsDir() {
-			if err := b.copyDirSplit(src, include, sourceWorkDir, stageDir); err != nil {
+			if err := b.copyDirSplitWithExcludes(src, include, sourceWorkDir, stageDir, b.Config.Exclude); err != nil {
 				return fmt.Errorf("failed to copy directory %s: %w", include, err)
 			}
 		} else {
@@ -256,6 +262,10 @@ func (b *Builder) copyFile(src, dst string) error {
 }
 
 func (b *Builder) copyDirSplit(src, relBase, phpDst, otherDst string) error {
+	return b.copyDirSplitWithExcludes(src, relBase, phpDst, otherDst, nil)
+}
+
+func (b *Builder) copyDirSplitWithExcludes(src, relBase, phpDst, otherDst string, excludes []string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -269,6 +279,14 @@ func (b *Builder) copyDirSplit(src, relBase, phpDst, otherDst string) error {
 		fullRel := relBase
 		if relPath != "." {
 			fullRel = filepath.Join(relBase, relPath)
+		}
+
+		// Check if excluded
+		if IsExcluded(fullRel, excludes) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 
 		if info.IsDir() {

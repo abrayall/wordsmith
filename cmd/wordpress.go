@@ -31,18 +31,32 @@ var startCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if !config.Exists(dir) {
-			ui.PrintError("No plugin.properties found in current directory")
+		isTheme := config.ThemeExists(dir)
+		isPlugin := config.PluginExists(dir)
+
+		if !isTheme && !isPlugin {
+			ui.PrintError("No plugin.properties or theme.properties found in current directory")
 			os.Exit(1)
 		}
 
-		cfg, err := config.LoadProperties(dir)
-		if err != nil {
-			ui.PrintError("Failed to load plugin.properties: %v", err)
-			os.Exit(1)
+		var name string
+		if isTheme {
+			cfg, err := config.LoadThemeProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load theme.properties: %v", err)
+				os.Exit(1)
+			}
+			name = cfg.Name
+		} else {
+			cfg, err := config.LoadPluginProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load plugin.properties: %v", err)
+				os.Exit(1)
+			}
+			name = cfg.Name
 		}
 
-		pluginSlug := sanitizePluginName(cfg.Name)
+		pluginSlug := sanitizePluginName(name)
 
 		if !isCommandAvailable("docker") {
 			ui.PrintError("Docker is not installed or not in PATH")
@@ -75,7 +89,7 @@ var startCmd = &cobra.Command{
 				ui.PrintInfo("Installing WordPress...")
 				port := 0
 				fmt.Sscanf(wpPort, "%d", &port)
-				if err := installWordPress(pluginSlug, port, cfg.Name); err != nil {
+				if err := installWordPress(pluginSlug, port, name); err != nil {
 					ui.PrintWarning("Auto-install failed: %v", err)
 				}
 			}
@@ -124,7 +138,7 @@ var startCmd = &cobra.Command{
 
 		if needsInstall(wpURL) {
 			ui.PrintInfo("Installing WordPress...")
-			if err := installWordPress(pluginSlug, wpPort, cfg.Name); err != nil {
+			if err := installWordPress(pluginSlug, wpPort, name); err != nil {
 				ui.PrintWarning("Auto-install failed: %v", err)
 				ui.PrintInfo("You may need to complete setup manually")
 			}
@@ -161,18 +175,32 @@ var stopCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if !config.Exists(dir) {
-			ui.PrintError("No plugin.properties found in current directory")
+		isTheme := config.ThemeExists(dir)
+		isPlugin := config.PluginExists(dir)
+
+		if !isTheme && !isPlugin {
+			ui.PrintError("No plugin.properties or theme.properties found in current directory")
 			os.Exit(1)
 		}
 
-		cfg, err := config.LoadProperties(dir)
-		if err != nil {
-			ui.PrintError("Failed to load plugin.properties: %v", err)
-			os.Exit(1)
+		var name string
+		if isTheme {
+			cfg, err := config.LoadThemeProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load theme.properties: %v", err)
+				os.Exit(1)
+			}
+			name = cfg.Name
+		} else {
+			cfg, err := config.LoadPluginProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load plugin.properties: %v", err)
+				os.Exit(1)
+			}
+			name = cfg.Name
 		}
 
-		pluginSlug := sanitizePluginName(cfg.Name)
+		pluginSlug := sanitizePluginName(name)
 
 		ui.PrintInfo("Stopping WordPress environment [%s]...", pluginSlug)
 
@@ -199,18 +227,32 @@ var deleteCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if !config.Exists(dir) {
-			ui.PrintError("No plugin.properties found in current directory")
+		isTheme := config.ThemeExists(dir)
+		isPlugin := config.PluginExists(dir)
+
+		if !isTheme && !isPlugin {
+			ui.PrintError("No plugin.properties or theme.properties found in current directory")
 			os.Exit(1)
 		}
 
-		cfg, err := config.LoadProperties(dir)
-		if err != nil {
-			ui.PrintError("Failed to load plugin.properties: %v", err)
-			os.Exit(1)
+		var name string
+		if isTheme {
+			cfg, err := config.LoadThemeProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load theme.properties: %v", err)
+				os.Exit(1)
+			}
+			name = cfg.Name
+		} else {
+			cfg, err := config.LoadPluginProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load plugin.properties: %v", err)
+				os.Exit(1)
+			}
+			name = cfg.Name
 		}
 
-		pluginSlug := sanitizePluginName(cfg.Name)
+		pluginSlug := sanitizePluginName(name)
 
 		ui.PrintInfo("Deleting WordPress environment [%s]...", pluginSlug)
 

@@ -32,17 +32,54 @@ var watchCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if !config.Exists(dir) {
-			ui.PrintError("No plugin.properties found in current directory")
+		isTheme := config.ThemeExists(dir)
+		isPlugin := config.PluginExists(dir)
+
+		if !isTheme && !isPlugin {
+			ui.PrintError("No plugin.properties or theme.properties found in current directory")
 			os.Exit(1)
 		}
 
-		cfg, err := config.LoadProperties(dir)
-		if err != nil {
-			ui.PrintError("Failed to load plugin.properties: %v", err)
-			os.Exit(1)
+		var mainFile string
+		var includes []string
+		var propsFile string
+
+		if isTheme {
+			cfg, err := config.LoadThemeProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load theme.properties: %v", err)
+				os.Exit(1)
+			}
+			mainFile = cfg.Main
+			includes = cfg.Include
+			propsFile = "theme.properties"
+		} else {
+			cfg, err := config.LoadPluginProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load plugin.properties: %v", err)
+				os.Exit(1)
+			}
+			mainFile = cfg.Main
+			includes = cfg.Include
+			propsFile = "plugin.properties"
 		}
 
+		// Run initial build/deploy
+		ui.PrintInfo("Running initial %s...", mode)
+		fmt.Println()
+
+		var initialCmd *exec.Cmd
+		if mode == "deploy" {
+			initialCmd = exec.Command(os.Args[0], "deploy", "--quiet")
+		} else {
+			initialCmd = exec.Command(os.Args[0], "build", "--quiet")
+		}
+		initialCmd.Stdout = os.Stdout
+		initialCmd.Stderr = os.Stderr
+		initialCmd.Dir = dir
+		initialCmd.Run()
+
+		fmt.Println()
 		ui.PrintInfo("Watching for changes (mode: %s)...", mode)
 		ui.PrintInfo("Press Ctrl+C to stop")
 		fmt.Println()
@@ -53,7 +90,7 @@ var watchCmd = &cobra.Command{
 		for {
 			time.Sleep(500 * time.Millisecond)
 
-			changed, newMod := hasChanges(dir, cfg, lastMod)
+			changed, newMod := hasChangesGeneric(dir, mainFile, includes, propsFile, lastMod)
 			if !changed {
 				continue
 			}
@@ -89,7 +126,7 @@ func init() {
 	rootCmd.AddCommand(watchCmd)
 }
 
-func hasChanges(dir string, cfg *config.PluginConfig, since time.Time) (bool, time.Time) {
+func hasChangesGeneric(dir string, mainFile string, includes []string, propsFile string, since time.Time) (bool, time.Time) {
 	var latestMod time.Time
 	changed := false
 
@@ -106,10 +143,10 @@ func hasChanges(dir string, cfg *config.PluginConfig, since time.Time) (bool, ti
 		}
 	}
 
-	mainFile := filepath.Join(dir, cfg.Main)
-	checkFile(mainFile)
+	mainPath := filepath.Join(dir, mainFile)
+	checkFile(mainPath)
 
-	for _, include := range cfg.Include {
+	for _, include := range includes {
 		path := filepath.Join(dir, include)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -132,8 +169,8 @@ func hasChanges(dir string, cfg *config.PluginConfig, since time.Time) (bool, ti
 		}
 	}
 
-	propsFile := filepath.Join(dir, "plugin.properties")
-	checkFile(propsFile)
+	propsPath := filepath.Join(dir, propsFile)
+	checkFile(propsPath)
 
 	return changed, latestMod
 }

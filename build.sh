@@ -5,14 +5,14 @@
 
 set -e  # Exit on error
 
-echo "======================================"
+echo "=============================================="
 echo "Wordsmith Build"
-echo "======================================"
+echo "=============================================="
 echo ""
 
 # Colors for output
 GREEN='\033[0;32m'
-BLUE='\033[0;34m'
+BLUE='\033[38;2;59;130;246m'
 NC='\033[0m' # No Color
 
 # Get script directory
@@ -90,9 +90,9 @@ done
 
 # Summary
 echo ""
-echo "======================================"
+echo "=============================================="
 echo -e "${GREEN}Build Complete!${NC}"
-echo "======================================"
+echo "=============================================="
 echo ""
 echo "Artifacts created in build/:"
 ls -1 "$BUILD_DIR"
