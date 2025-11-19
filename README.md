@@ -30,15 +30,51 @@ Creates a `plugin.properties` file in the current directory.
 wordsmith build
 ```
 
-Build types:
+Builds the plugin and creates a ZIP file ready for upload to WordPress.
 
-- `--type=dev` - No obfuscation or minification
-- `--type=release` - CSS/JS minification only (for WordPress.org)
-- `--type=prod` - Full obfuscation and minification (default)
+### WordPress Development Environment
 
-If no type is specified, it auto-detects based on version:
-- Clean version (0.1.0) → production
-- Dev version (0.1.0-5) → dev
+Start a local WordPress instance in Docker:
+
+```bash
+wordsmith wordpress start
+```
+
+This will:
+- Start MySQL and WordPress containers
+- Auto-install WordPress with admin/admin credentials
+- Open the browser to your local WordPress site
+
+Stop the environment:
+
+```bash
+wordsmith wordpress stop
+```
+
+Delete the environment and all data:
+
+```bash
+wordsmith wordpress delete
+```
+
+### Deploy to WordPress
+
+Build and deploy your plugin to the running WordPress container:
+
+```bash
+wordsmith deploy
+```
+
+This builds the plugin, copies it to the WordPress container, and activates it.
+
+### Watch for Changes
+
+Automatically rebuild or deploy when files change:
+
+```bash
+wordsmith watch build
+wordsmith watch deploy
+```
 
 ## plugin.properties
 
@@ -47,15 +83,15 @@ name=My Plugin
 description=A WordPress plugin
 
 author=Your Name
-author_uri=https://example.com
-plugin_uri=https://github.com/user/plugin
+author-uri=https://example.com
+plugin-uri=https://github.com/user/plugin
 license=GPL v2 or later
-license_uri=https://www.gnu.org/licenses/gpl-2.0.html
+license-uri=https://www.gnu.org/licenses/gpl-2.0.html
 
 main=my-plugin.php
 include=assets,templates,includes
-text_domain=my-plugin
-domain_path=/languages
+text-domain=my-plugin
+domain-path=/languages
 ```
 
 ### Options
@@ -65,16 +101,15 @@ domain_path=/languages
 - `version` - Version string (optional, defaults to git tag)
 - `description` - Plugin description
 - `author` - Author name
-- `author_uri` - Author URL
-- `plugin_uri` - Plugin URL
+- `author-uri` - Author URL
+- `plugin-uri` - Plugin URL
 - `license` - License name
-- `license_uri` - License URL
+- `license-uri` - License URL
 - `include` - Comma-separated list of files/directories to include
-- `text_domain` - Text domain for i18n
-- `domain_path` - Path to language files
+- `text-domain` - Text domain for i18n
+- `domain-path` - Path to language files
 - `requires` - Minimum WordPress version
-- `requires_php` - Minimum PHP version
-- `obfuscate` - Enable/disable PHP obfuscation (default: true)
+- `requires-php` - Minimum PHP version
 
 ## Build Output
 

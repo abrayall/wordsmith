@@ -28,7 +28,6 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(initCmd)
 }
