@@ -66,6 +66,28 @@ var deployCmd = &cobra.Command{
 				ui.PrintInfo("Deploying theme to WordPress...")
 			}
 
+			// Deploy all parent themes first (grandparent, then parent, etc.)
+			parentThemes := b.GetAllParentThemes()
+			for _, parent := range parentThemes {
+				parentSlug := sanitizeForDocker(parent.Name)
+
+				if !quiet {
+					ui.PrintInfo("Deploying parent theme '%s'...", parent.Name)
+				}
+
+				parentContainerPath := fmt.Sprintf("/var/www/html/wp-content/themes/%s", parentSlug)
+
+				dockerCmd := exec.Command("docker", "exec", containerName, "rm", "-rf", parentContainerPath)
+				dockerCmd.Run()
+
+				dockerCmd = exec.Command("docker", "cp", parent.Path+"/.", containerName+":"+parentContainerPath)
+				if err := dockerCmd.Run(); err != nil {
+					ui.PrintError("Failed to deploy parent theme '%s': %v", parent.Name, err)
+					os.Exit(1)
+				}
+			}
+
+			// Deploy child theme
 			stageDir = fmt.Sprintf("%s/build/work/stage", dir)
 			containerPath = fmt.Sprintf("/var/www/html/wp-content/themes/%s", slug)
 

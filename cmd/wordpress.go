@@ -68,7 +68,12 @@ var startCmd = &cobra.Command{
 			ui.PrintWarning("WordPress is already running")
 			wpPort := getContainerPort(pluginSlug + "-wordpress")
 			if wpPort != "" {
-				ui.PrintInfo("WordPress: http://localhost:%s", wpPort)
+				wpURL := "http://localhost:" + wpPort
+				ui.PrintInfo("WordPress: %s", ui.Highlight(wpURL))
+				ui.PrintInfo("Admin:     %s", ui.Highlight(wpURL+"/wp-admin"))
+				fmt.Println()
+				openBrowser(wpURL)
+				openBrowser(wpURL + "/wp-admin")
 			}
 			os.Exit(0)
 		}
@@ -97,10 +102,10 @@ var startCmd = &cobra.Command{
 			fmt.Println()
 			ui.PrintSuccess("WordPress is running!")
 			fmt.Println()
-			ui.PrintInfo("WordPress: %s", wpURL)
-			ui.PrintInfo("Admin:     %s/wp-admin", wpURL)
-			ui.PrintInfo("Username:  admin")
-			ui.PrintInfo("Password:  admin")
+			ui.PrintInfo("WordPress: %s", ui.Highlight(wpURL))
+			ui.PrintInfo("Admin:     %s", ui.Highlight(wpURL+"/wp-admin"))
+			ui.PrintInfo("Username:  %s", ui.Highlight("admin"))
+			ui.PrintInfo("Password:  %s", ui.Highlight("admin"))
 			fmt.Println()
 			openBrowser(wpURL)
 			openBrowser(wpURL + "/wp-admin")
@@ -121,7 +126,7 @@ var startCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		ui.PrintInfo("Using ports - WordPress: %d, MySQL: %d", wpPort, mysqlPort)
+		fmt.Printf("\033[38;2;59;130;246m• Using ports - WordPress: \033[0m%s\033[38;2;59;130;246m, MySQL: \033[0m%s\n", ui.Highlight(fmt.Sprintf("%d", wpPort)), ui.Highlight(fmt.Sprintf("%d", mysqlPort)))
 
 		if err := startContainers(pluginSlug, dir, wpPort, mysqlPort); err != nil {
 			ui.PrintError("Failed to start containers: %v", err)
@@ -152,10 +157,10 @@ var startCmd = &cobra.Command{
 		fmt.Println()
 		ui.PrintSuccess("WordPress is running!")
 		fmt.Println()
-		ui.PrintInfo("WordPress: %s", wpURL)
-		ui.PrintInfo("Admin:     %s/wp-admin", wpURL)
-		ui.PrintInfo("Username:  admin")
-		ui.PrintInfo("Password:  admin")
+		ui.PrintInfo("WordPress: %s", ui.Highlight(wpURL))
+		ui.PrintInfo("Admin:     %s", ui.Highlight(wpURL+"/wp-admin"))
+		ui.PrintInfo("Username:  %s", ui.Highlight("admin"))
+		ui.PrintInfo("Password:  %s", ui.Highlight("admin"))
 		fmt.Println()
 
 		openBrowser(wpURL)
@@ -212,6 +217,33 @@ var stopCmd = &cobra.Command{
 
 		ui.PrintSuccess("WordPress stopped")
 		fmt.Println()
+	},
+}
+
+var browseCmd = &cobra.Command{
+	Use:   "browse [admin]",
+	Short: "Open WordPress in browser",
+	Run: func(cmd *cobra.Command, args []string) {
+		pluginSlug := getProjectSlug()
+
+		if !isContainerRunning(pluginSlug + "-wordpress") {
+			ui.PrintError("WordPress is not running. Run 'wordsmith wordpress start' first")
+			os.Exit(1)
+		}
+
+		wpPort := getContainerPort(pluginSlug + "-wordpress")
+		if wpPort == "" {
+			ui.PrintError("Could not determine WordPress port")
+			os.Exit(1)
+		}
+
+		wpURL := "http://localhost:" + wpPort
+
+		if len(args) > 0 && args[0] == "admin" {
+			openBrowser(wpURL + "/wp-admin")
+		} else {
+			openBrowser(wpURL)
+		}
 	},
 }
 
@@ -274,6 +306,7 @@ var deleteCmd = &cobra.Command{
 func init() {
 	wordpressCmd.AddCommand(startCmd)
 	wordpressCmd.AddCommand(stopCmd)
+	wordpressCmd.AddCommand(browseCmd)
 	wordpressCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(wordpressCmd)
 }
@@ -288,6 +321,42 @@ func sanitizePluginName(name string) string {
 		}
 	}
 	return clean
+}
+
+// getProjectSlug returns the sanitized project slug from plugin.properties or theme.properties
+func getProjectSlug() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		ui.PrintError("Failed to get current directory: %v", err)
+		os.Exit(1)
+	}
+
+	isTheme := config.ThemeExists(dir)
+	isPlugin := config.PluginExists(dir)
+
+	if !isTheme && !isPlugin {
+		ui.PrintError("No plugin.properties or theme.properties found in current directory")
+		os.Exit(1)
+	}
+
+	var name string
+	if isTheme {
+		cfg, err := config.LoadThemeProperties(dir)
+		if err != nil {
+			ui.PrintError("Failed to load theme.properties: %v", err)
+			os.Exit(1)
+		}
+		name = cfg.Name
+	} else {
+		cfg, err := config.LoadPluginProperties(dir)
+		if err != nil {
+			ui.PrintError("Failed to load plugin.properties: %v", err)
+			os.Exit(1)
+		}
+		name = cfg.Name
+	}
+
+	return sanitizePluginName(name)
 }
 
 func findAvailablePort(start, end int) int {

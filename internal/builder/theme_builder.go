@@ -1,7 +1,10 @@
 package builder
 
 import (
+	"archive/zip"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -156,6 +159,16 @@ func (b *ThemeBuilder) Build() error {
 		return fmt.Errorf("failed to write theme.properties: %w", err)
 	}
 
+	// Fetch parent theme if template-uri is specified
+	if b.Config.TemplateURI != "" {
+		if !b.Quiet {
+			ui.PrintInfo("Fetching parent theme...")
+		}
+		if err := b.fetchParentTheme(); err != nil {
+			return fmt.Errorf("failed to fetch parent theme: %w", err)
+		}
+	}
+
 	// Clean dev files
 	b.cleanDevFiles(stageDir)
 
@@ -276,6 +289,9 @@ func (b *ThemeBuilder) generateThemeHeader(path string) error {
 	if b.Config.AuthorURI != "" {
 		header += fmt.Sprintf("Author URI: %s\n", b.Config.AuthorURI)
 	}
+	if b.Config.Template != "" {
+		header += fmt.Sprintf("Template: %s\n", b.Config.Template)
+	}
 	if b.Config.License != "" {
 		header += fmt.Sprintf("License: %s\n", b.Config.License)
 	}
@@ -344,6 +360,9 @@ func (b *ThemeBuilder) writeThemeProperties(path string) error {
 	if b.Config.ThemeURI != "" {
 		lines = append(lines, fmt.Sprintf("theme-uri=%s", b.Config.ThemeURI))
 	}
+	if b.Config.Template != "" {
+		lines = append(lines, fmt.Sprintf("template=%s", b.Config.Template))
+	}
 	if b.Config.License != "" {
 		lines = append(lines, fmt.Sprintf("license=%s", b.Config.License))
 	}
@@ -404,4 +423,250 @@ func (b *ThemeBuilder) GetStagePath() string {
 // GetThemeName returns the sanitized theme name
 func (b *ThemeBuilder) GetThemeName() string {
 	return b.sanitizeName(b.Config.Name)
+}
+
+// GetParentThemePath returns the path to the parent theme directory, if it exists
+func (b *ThemeBuilder) GetParentThemePath() string {
+	parentDir := filepath.Join(b.WorkDir, "parent")
+	if _, err := os.Stat(parentDir); err == nil {
+		return parentDir
+	}
+	return ""
+}
+
+// GetAllParentThemes returns all parent themes in order (grandparent first, then parent, etc.)
+func (b *ThemeBuilder) GetAllParentThemes() []struct {
+	Name string
+	Path string
+} {
+	var themes []struct {
+		Name string
+		Path string
+	}
+
+	// Walk the parent chain
+	currentDir := b.WorkDir
+	for {
+		parentDir := filepath.Join(currentDir, "parent")
+		if _, err := os.Stat(parentDir); err != nil {
+			break
+		}
+
+		// Try to get the theme name from theme.properties
+		themeName := ""
+		propsPath := filepath.Join(parentDir, "theme.properties")
+		if cfg, err := config.LoadThemeProperties(filepath.Dir(propsPath)); err == nil {
+			themeName = cfg.Name
+		} else {
+			// Try to infer from style.css
+			themeName = b.getThemeNameFromStyleCSS(parentDir)
+		}
+
+		if themeName == "" {
+			break
+		}
+
+		themes = append([]struct {
+			Name string
+			Path string
+		}{{Name: themeName, Path: parentDir}}, themes...)
+
+		currentDir = parentDir
+	}
+
+	return themes
+}
+
+func (b *ThemeBuilder) getThemeNameFromStyleCSS(dir string) string {
+	stylePath := filepath.Join(dir, "style.css")
+	content, err := os.ReadFile(stylePath)
+	if err != nil {
+		return ""
+	}
+
+	re := regexp.MustCompile(`Theme Name:\s*(.+)`)
+	matches := re.FindStringSubmatch(string(content))
+	if len(matches) > 1 {
+		return strings.TrimSpace(matches[1])
+	}
+	return ""
+}
+
+// GetParentThemeName returns the template (parent theme slug)
+func (b *ThemeBuilder) GetParentThemeName() string {
+	return b.Config.Template
+}
+
+func (b *ThemeBuilder) fetchParentTheme() error {
+	uri := b.Config.TemplateURI
+	parentDir := filepath.Join(b.WorkDir, "parent")
+
+	// Create parent directory
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return fmt.Errorf("failed to create parent directory: %w", err)
+	}
+
+	// Check if it's a URL
+	if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") {
+		return b.downloadAndExtractTheme(uri, parentDir)
+	}
+
+	// It's a file path
+	srcPath := uri
+	if !filepath.IsAbs(srcPath) {
+		srcPath = filepath.Join(b.SourceDir, uri)
+	}
+
+	// Check if it's a zip file
+	if strings.HasSuffix(strings.ToLower(srcPath), ".zip") {
+		return b.extractZip(srcPath, parentDir)
+	}
+
+	// It's a directory - check if it has theme.properties (needs to be built)
+	themePropsPath := filepath.Join(srcPath, "theme.properties")
+	if _, err := os.Stat(themePropsPath); err == nil {
+		// This is a theme source directory - check if it's already built
+		builtPath := filepath.Join(srcPath, "build", "work", "stage")
+		parentParentPath := filepath.Join(srcPath, "build", "work", "parent")
+
+		if _, err := os.Stat(builtPath); err == nil {
+			// Use existing build
+			if err := b.copyDir(builtPath, parentDir); err != nil {
+				return err
+			}
+			// Also copy grandparent if exists
+			if _, err := os.Stat(parentParentPath); err == nil {
+				grandparentDir := filepath.Join(parentDir, "parent")
+				return b.copyDir(parentParentPath, grandparentDir)
+			}
+			return nil
+		}
+
+		// Need to build the parent theme
+		if !b.Quiet {
+			ui.PrintInfo("Building parent theme...")
+		}
+		parentBuilder := NewThemeBuilder(srcPath)
+		parentBuilder.Quiet = true
+		if err := parentBuilder.Build(); err != nil {
+			return fmt.Errorf("failed to build parent theme: %w", err)
+		}
+
+		// Copy the built theme
+		if err := b.copyDir(parentBuilder.GetStagePath(), parentDir); err != nil {
+			return err
+		}
+
+		// Also copy grandparent chain if exists
+		grandparentPath := parentBuilder.GetParentThemePath()
+		if grandparentPath != "" {
+			grandparentDir := filepath.Join(parentDir, "parent")
+			return b.copyDir(grandparentPath, grandparentDir)
+		}
+		return nil
+	}
+
+	// It's a regular directory - copy it directly
+	return b.copyDir(srcPath, parentDir)
+}
+
+func (b *ThemeBuilder) downloadAndExtractTheme(url, destDir string) error {
+	// Download to temp file
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed with status: %s", resp.Status)
+	}
+
+	// Create temp file for zip
+	tmpFile, err := os.CreateTemp("", "theme-*.zip")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Copy response to temp file
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return fmt.Errorf("failed to save download: %w", err)
+	}
+	tmpFile.Close()
+
+	// Extract the zip
+	return b.extractZip(tmpFile.Name(), destDir)
+}
+
+func (b *ThemeBuilder) extractZip(zipPath, destDir string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip: %w", err)
+	}
+	defer r.Close()
+
+	// Find the root directory in the zip (if any)
+	var rootDir string
+	for _, f := range r.File {
+		parts := strings.Split(f.Name, "/")
+		if len(parts) > 1 && rootDir == "" {
+			rootDir = parts[0]
+		}
+		break
+	}
+
+	for _, f := range r.File {
+		// Calculate destination path
+		name := f.Name
+
+		// Strip the root directory if all files are in one
+		if rootDir != "" && strings.HasPrefix(name, rootDir+"/") {
+			name = strings.TrimPrefix(name, rootDir+"/")
+		}
+
+		if name == "" {
+			continue
+		}
+
+		fpath := filepath.Join(destDir, name)
+
+		// Check for ZipSlip vulnerability
+		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path: %s", fpath)
+		}
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(fpath, os.ModePerm)
+			continue
+		}
+
+		// Create parent directories
+		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return err
+		}
+
+		// Extract file
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			return err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		outFile.Close()
+		rc.Close()
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

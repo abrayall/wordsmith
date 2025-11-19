@@ -19,6 +19,8 @@ type ThemeConfig struct {
 	License     string
 	LicenseURI  string
 	Main        string // Main stylesheet (style.css)
+	Template    string // Parent theme for child themes
+	TemplateURI string // URL or path to parent theme
 	TextDomain  string
 	DomainPath  string
 	Requires    string
@@ -87,6 +89,10 @@ func LoadThemeProperties(dir string) (*ThemeConfig, error) {
 			config.LicenseURI = value
 		case "main":
 			config.Main = value
+		case "template":
+			config.Template = value
+		case "template-uri":
+			config.TemplateURI = value
 		case "text-domain":
 			config.TextDomain = value
 		case "domain-path":

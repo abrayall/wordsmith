@@ -59,6 +59,9 @@ wordsmith init plugin --name="My Plugin" --author="John Doe" --author-uri="https
 wordsmith init theme --name="My Theme" --type=block
 wordsmith init theme --name="My Theme" --type=classic
 wordsmith init theme --name="My Theme" --type=hybrid
+
+# Child theme
+wordsmith init theme --name="My Child Theme" --type=child --template="Parent Theme" --template-uri="../parent-theme"
 ```
 
 Available flags:
@@ -66,7 +69,9 @@ Available flags:
 - `--description` - Description
 - `--author` - Author name
 - `--author-uri` - Author website URL
-- `--type` - Theme type: `block`, `classic`, or `hybrid` (themes only)
+- `--type` - Theme type: `block`, `classic`, `hybrid`, or `child` (themes only)
+- `--template` - Parent theme name (required for child themes)
+- `--template-uri` - Parent theme URL or path (required for child themes)
 
 ### Build
 
@@ -97,6 +102,12 @@ wordsmith wordpress stop
 Delete the environment and all data:
 ```bash
 wordsmith wordpress delete
+```
+
+Open WordPress in browser:
+```bash
+wordsmith wordpress browse        # opens frontend
+wordsmith wordpress browse admin  # opens admin panel
 ```
 
 ### Deploy
@@ -158,6 +169,27 @@ exclude=node_modules,build,.*
 text-domain=my-theme
 tags=custom-logo,custom-menu,editor-style
 ```
+
+### Child Theme Configuration
+
+For child themes, add parent theme settings:
+
+```properties
+name=My Child Theme
+description=A child theme
+template=parent-theme-slug
+template-uri=https://example.com/parent-theme.zip
+
+# Or use a local path
+template-uri=../parent-theme
+```
+
+The `template-uri` can be:
+- A URL to a zip file (downloaded automatically)
+- A local path to a theme directory (built if it has theme.properties)
+- A local path to a zip file
+
+Child themes support recursive parent chains (child → parent → grandparent).
 
 ### Wildcard Support
 

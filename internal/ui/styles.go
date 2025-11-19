@@ -48,7 +48,16 @@ var (
 
 	ValueStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#E5E7EB"))
+
+	HighlightStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Bold(true)
 )
+
+// Highlight returns the string formatted as a highlighted value
+func Highlight(s string) string {
+	return HighlightStyle.Render(s)
+}
 
 // Banner prints the wordsmith banner
 func Banner() string {
@@ -91,12 +100,12 @@ func PrintKeyValue(key, value string) {
 
 // Divider prints a divider line
 func Divider() string {
-	return MutedStyle.Render("─────────────────────────────────────────")
+	return MutedStyle.Render("──────────────────────────────────────────────")
 }
 
 // VersionLine returns the formatted version string
 func VersionLine(version string) string {
-	return ValueStyle.Render("                    v" + version)
+	return ValueStyle.Render(" v" + version)
 }
 
 // PrintVersion prints the version
