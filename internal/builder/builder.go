@@ -1,0 +1,433 @@
+package builder
+
+import (
+	"archive/zip"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"wordsmith/internal/config"
+	"wordsmith/internal/obfuscator"
+	"wordsmith/internal/ui"
+	"wordsmith/internal/version"
+)
+
+type Builder struct {
+	SourceDir      string
+	BuildDir       string
+	WorkDir        string
+	Config         *config.PluginConfig
+	Version        *version.Version
+	DevMode        bool
+	ReleaseMode    bool
+	AutoDetectMode bool
+}
+
+func New(sourceDir string) *Builder {
+	buildDir := filepath.Join(sourceDir, "build")
+	return &Builder{
+		SourceDir: sourceDir,
+		BuildDir:  buildDir,
+		WorkDir:   filepath.Join(buildDir, "work"),
+	}
+}
+
+func (b *Builder) Build() error {
+	ui.PrintInfo("Loading plugin.properties...")
+	cfg, err := config.LoadProperties(b.SourceDir)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+	b.Config = cfg
+
+	if cfg.Version != "" {
+		b.Version = &version.Version{
+			Major:       0,
+			Minor:       0,
+			Maintenance: cfg.Version,
+		}
+		re := regexp.MustCompile(`^(\d+)\.(\d+)\.(.+)$`)
+		if matches := re.FindStringSubmatch(cfg.Version); matches != nil {
+			fmt.Sscanf(matches[1], "%d", &b.Version.Major)
+			fmt.Sscanf(matches[2], "%d", &b.Version.Minor)
+			b.Version.Maintenance = matches[3]
+		}
+	} else {
+		ui.PrintInfo("Reading version from git tags...")
+		ver, err := version.GetFromGit(b.SourceDir)
+		if err != nil {
+			return fmt.Errorf("failed to get version from git: %w", err)
+		}
+		b.Version = ver
+		if ver.IsDirty {
+			ui.PrintWarning("Detected uncommitted changes, appending timestamp")
+		}
+	}
+
+	fmt.Println()
+	ui.PrintKeyValue("Name", "    "+b.Config.Name)
+	ui.PrintKeyValue("Version", " "+b.Version.String())
+
+	if b.AutoDetectMode {
+		if strings.Contains(b.Version.Maintenance, "-") {
+			b.DevMode = true
+		}
+	}
+
+	if b.DevMode {
+		ui.PrintKeyValue("Type", "    dev")
+		b.Config.Obfuscate = false
+		b.Config.Minify = false
+	} else if b.ReleaseMode {
+		ui.PrintKeyValue("Type", "    release")
+		b.Config.Obfuscate = false
+	} else {
+		ui.PrintKeyValue("Type", "    production")
+	}
+	fmt.Println()
+
+	ui.PrintInfo("Cleaning build directory...")
+	if err := os.RemoveAll(b.BuildDir); err != nil {
+		return fmt.Errorf("failed to clean build directory: %w", err)
+	}
+
+	sourceWorkDir := filepath.Join(b.WorkDir, "source")
+	stageDir := filepath.Join(b.WorkDir, "stage")
+	pluginName := b.sanitizeName(b.Config.Name)
+
+	if err := os.MkdirAll(sourceWorkDir, 0755); err != nil {
+		return fmt.Errorf("failed to create source directory: %w", err)
+	}
+	if err := os.MkdirAll(stageDir, 0755); err != nil {
+		return fmt.Errorf("failed to create stage directory: %w", err)
+	}
+
+	ui.PrintInfo("Copying plugin files...")
+
+	mainFile := filepath.Base(b.Config.Main)
+	mainSrc := filepath.Join(b.SourceDir, b.Config.Main)
+
+	if err := b.copyFile(mainSrc, filepath.Join(sourceWorkDir, mainFile)); err != nil {
+		return fmt.Errorf("failed to copy main plugin file: %w", err)
+	}
+
+	for _, include := range b.Config.Include {
+		src := filepath.Join(b.SourceDir, include)
+		info, err := os.Stat(src)
+		if err != nil {
+			ui.PrintWarning("Skipping %s: %v", include, err)
+			continue
+		}
+
+		if info.IsDir() {
+			if err := b.copyDirSplit(src, include, sourceWorkDir, stageDir); err != nil {
+				return fmt.Errorf("failed to copy directory %s: %w", include, err)
+			}
+		} else {
+			if strings.HasSuffix(include, ".php") {
+				if err := b.copyFile(src, filepath.Join(sourceWorkDir, include)); err != nil {
+					return fmt.Errorf("failed to copy file %s: %w", include, err)
+				}
+			} else {
+				dst := filepath.Join(stageDir, include)
+				if b.Config.Minify && (strings.HasSuffix(include, ".css") || strings.HasSuffix(include, ".js")) {
+					if err := b.copyAndMinify(src, dst); err != nil {
+						return fmt.Errorf("failed to minify file %s: %w", include, err)
+					}
+				} else {
+					if err := b.copyFile(src, dst); err != nil {
+						return fmt.Errorf("failed to copy file %s: %w", include, err)
+					}
+				}
+			}
+		}
+	}
+
+	for _, readme := range []string{"README.md", "readme.txt"} {
+		src := filepath.Join(b.SourceDir, readme)
+		if _, err := os.Stat(src); err == nil {
+			if err := b.copyFile(src, filepath.Join(stageDir, readme)); err != nil {
+				ui.PrintWarning("Failed to copy %s: %v", readme, err)
+			}
+		}
+	}
+
+	if b.Config.Obfuscate {
+		ui.PrintInfo("Obfuscating PHP files...")
+	} else {
+		ui.PrintInfo("Processing PHP files...")
+	}
+
+	err = filepath.Walk(sourceWorkDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+
+		relPath, err := filepath.Rel(sourceWorkDir, path)
+		if err != nil {
+			return err
+		}
+
+		dstPath := filepath.Join(stageDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+			return err
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		var output string
+		if b.Config.Obfuscate && strings.HasSuffix(info.Name(), ".php") {
+			output, err = obfuscator.Obfuscate(string(content))
+			if err != nil {
+				return fmt.Errorf("failed to obfuscate %s: %w", relPath, err)
+			}
+		} else {
+			output = string(content)
+		}
+
+		return os.WriteFile(dstPath, []byte(output), info.Mode())
+	})
+	if err != nil {
+		return fmt.Errorf("failed to process PHP files: %w", err)
+	}
+
+	if err := b.generatePluginHeader(filepath.Join(stageDir, mainFile)); err != nil {
+		return fmt.Errorf("failed to generate plugin header: %w", err)
+	}
+
+	versionFile := filepath.Join(stageDir, "version.properties")
+	if err := b.writeVersionProperties(versionFile); err != nil {
+		return fmt.Errorf("failed to write version.properties: %w", err)
+	}
+
+	b.cleanDevFiles(stageDir)
+
+	ui.PrintInfo("Creating ZIP archive...")
+	zipPath := filepath.Join(b.BuildDir, fmt.Sprintf("%s-%s.zip", pluginName, b.Version.String()))
+	if err := b.createZip(stageDir, zipPath, pluginName); err != nil {
+		return fmt.Errorf("failed to create ZIP: %w", err)
+	}
+
+	fmt.Println()
+	ui.PrintSuccess("Created: %s", filepath.Base(zipPath))
+
+	return nil
+}
+
+func (b *Builder) sanitizeName(name string) string {
+	result := strings.ToLower(name)
+	result = strings.ReplaceAll(result, " ", "-")
+	re := regexp.MustCompile(`[^a-z0-9-]`)
+	result = re.ReplaceAllString(result, "")
+	return result
+}
+
+func (b *Builder) copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	return err
+}
+
+func (b *Builder) copyDirSplit(src, relBase, phpDst, otherDst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+
+		fullRel := relBase
+		if relPath != "." {
+			fullRel = filepath.Join(relBase, relPath)
+		}
+
+		if info.IsDir() {
+			os.MkdirAll(filepath.Join(phpDst, fullRel), info.Mode())
+			os.MkdirAll(filepath.Join(otherDst, fullRel), info.Mode())
+			return nil
+		}
+
+		if strings.HasSuffix(info.Name(), ".php") {
+			return b.copyFile(path, filepath.Join(phpDst, fullRel))
+		}
+
+		dst := filepath.Join(otherDst, fullRel)
+		if b.Config.Minify && (strings.HasSuffix(info.Name(), ".css") || strings.HasSuffix(info.Name(), ".js")) {
+			return b.copyAndMinify(path, dst)
+		}
+		return b.copyFile(path, dst)
+	})
+}
+
+func (b *Builder) copyAndMinify(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
+	content, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+
+	var minified string
+	if strings.HasSuffix(src, ".css") {
+		minified = obfuscator.MinifyCSS(string(content))
+	} else {
+		minified = obfuscator.MinifyJS(string(content))
+	}
+
+	return os.WriteFile(dst, []byte(minified), 0644)
+}
+
+func (b *Builder) generatePluginHeader(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	header := "<?php\n/**\n"
+	header += fmt.Sprintf(" * Plugin Name: %s\n", b.Config.Name)
+
+	if b.Config.PluginURI != "" {
+		header += fmt.Sprintf(" * Plugin URI: %s\n", b.Config.PluginURI)
+	}
+	if b.Config.Description != "" {
+		header += fmt.Sprintf(" * Description: %s\n", b.Config.Description)
+	}
+	header += fmt.Sprintf(" * Version: %s\n", b.Version.String())
+	if b.Config.Author != "" {
+		header += fmt.Sprintf(" * Author: %s\n", b.Config.Author)
+	}
+	if b.Config.AuthorURI != "" {
+		header += fmt.Sprintf(" * Author URI: %s\n", b.Config.AuthorURI)
+	}
+	if b.Config.License != "" {
+		header += fmt.Sprintf(" * License: %s\n", b.Config.License)
+	}
+	if b.Config.LicenseURI != "" {
+		header += fmt.Sprintf(" * License URI: %s\n", b.Config.LicenseURI)
+	}
+	if b.Config.TextDomain != "" {
+		header += fmt.Sprintf(" * Text Domain: %s\n", b.Config.TextDomain)
+	}
+	if b.Config.DomainPath != "" {
+		header += fmt.Sprintf(" * Domain Path: %s\n", b.Config.DomainPath)
+	}
+	if b.Config.Requires != "" {
+		header += fmt.Sprintf(" * Requires at least: %s\n", b.Config.Requires)
+	}
+	if b.Config.RequiresPHP != "" {
+		header += fmt.Sprintf(" * Requires PHP: %s\n", b.Config.RequiresPHP)
+	}
+	header += " */\n"
+
+	contentStr := string(content)
+	re := regexp.MustCompile(`(?s)^<\?php\s*/\*\*.*?\*/\s*`)
+	updated := re.ReplaceAllString(contentStr, header)
+
+	if updated == contentStr {
+		re = regexp.MustCompile(`^<\?php\s*`)
+		updated = re.ReplaceAllString(contentStr, header)
+	}
+
+	return os.WriteFile(path, []byte(updated), 0644)
+}
+
+func (b *Builder) writeVersionProperties(path string) error {
+	content := fmt.Sprintf(`# %s Version Information
+# Generated by wordsmith
+
+major=%d
+minor=%d
+maintenance=%s
+`, b.Config.Name, b.Version.Major, b.Version.Minor, b.Version.Maintenance)
+
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func (b *Builder) cleanDevFiles(dir string) {
+	patterns := []string{".DS_Store", "*.swp", "*.swo", "*~", ".git", ".gitignore"}
+
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		name := info.Name()
+		for _, pattern := range patterns {
+			if matched, _ := filepath.Match(pattern, name); matched {
+				os.RemoveAll(path)
+				break
+			}
+		}
+		return nil
+	})
+}
+
+func (b *Builder) createZip(sourceDir, zipPath, baseName string) error {
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		return err
+	}
+	defer zipFile.Close()
+
+	archive := zip.NewWriter(zipFile)
+	defer archive.Close()
+
+	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+		archivePath := filepath.Join(baseName, relPath)
+
+		if info.IsDir() {
+			if relPath != "." {
+				_, err = archive.Create(archivePath + "/")
+			}
+			return err
+		}
+
+		writer, err := archive.Create(archivePath)
+		if err != nil {
+			return err
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		_, err = io.Copy(writer, file)
+		return err
+	})
+}
