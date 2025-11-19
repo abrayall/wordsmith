@@ -45,8 +45,8 @@ func LoadProperties(dir string) (*PluginConfig, error) {
 
 	config := &PluginConfig{
 		Include:   []string{},
-		Obfuscate: true,
-		Minify:    true,
+		Obfuscate: false,
+		Minify:    false,
 	}
 
 	scanner := bufio.NewScanner(file)
@@ -76,23 +76,23 @@ func LoadProperties(dir string) (*PluginConfig, error) {
 			config.Description = value
 		case "author":
 			config.Author = value
-		case "author_uri":
+		case "author-uri":
 			config.AuthorURI = value
-		case "plugin_uri":
+		case "plugin-uri":
 			config.PluginURI = value
 		case "license":
 			config.License = value
-		case "license_uri":
+		case "license-uri":
 			config.LicenseURI = value
 		case "main":
 			config.Main = value
-		case "text_domain":
+		case "text-domain":
 			config.TextDomain = value
-		case "domain_path":
+		case "domain-path":
 			config.DomainPath = value
 		case "requires":
 			config.Requires = value
-		case "requires_php":
+		case "requires-php":
 			config.RequiresPHP = value
 		case "include":
 			// Parse comma-separated list

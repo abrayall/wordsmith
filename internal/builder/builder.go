@@ -16,14 +16,12 @@ import (
 )
 
 type Builder struct {
-	SourceDir      string
-	BuildDir       string
-	WorkDir        string
-	Config         *config.PluginConfig
-	Version        *version.Version
-	DevMode        bool
-	ReleaseMode    bool
-	AutoDetectMode bool
+	SourceDir string
+	BuildDir  string
+	WorkDir   string
+	Config    *config.PluginConfig
+	Version   *version.Version
+	Quiet     bool
 }
 
 func New(sourceDir string) *Builder {
@@ -36,7 +34,9 @@ func New(sourceDir string) *Builder {
 }
 
 func (b *Builder) Build() error {
-	ui.PrintInfo("Loading plugin.properties...")
+	if !b.Quiet {
+		ui.PrintInfo("Loading plugin.properties...")
+	}
 	cfg, err := config.LoadProperties(b.SourceDir)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -56,40 +56,31 @@ func (b *Builder) Build() error {
 			b.Version.Maintenance = matches[3]
 		}
 	} else {
-		ui.PrintInfo("Reading version from git tags...")
+		if !b.Quiet {
+			ui.PrintInfo("Reading version from git tags...")
+		}
 		ver, err := version.GetFromGit(b.SourceDir)
 		if err != nil {
 			return fmt.Errorf("failed to get version from git: %w", err)
 		}
 		b.Version = ver
-		if ver.IsDirty {
+		if ver.IsDirty && !b.Quiet {
 			ui.PrintWarning("Detected uncommitted changes, appending timestamp")
 		}
 	}
 
-	fmt.Println()
-	ui.PrintKeyValue("Name", "    "+b.Config.Name)
-	ui.PrintKeyValue("Version", " "+b.Version.String())
-
-	if b.AutoDetectMode {
-		if strings.Contains(b.Version.Maintenance, "-") {
-			b.DevMode = true
-		}
-	}
-
-	if b.DevMode {
-		ui.PrintKeyValue("Type", "    dev")
-		b.Config.Obfuscate = false
-		b.Config.Minify = false
-	} else if b.ReleaseMode {
-		ui.PrintKeyValue("Type", "    release")
-		b.Config.Obfuscate = false
+	if b.Quiet {
+		ui.PrintInfo("Building %s v%s", b.Config.Name, b.Version.String())
 	} else {
-		ui.PrintKeyValue("Type", "    production")
+		fmt.Println()
+		ui.PrintKeyValue("Name", "    "+b.Config.Name)
+		ui.PrintKeyValue("Version", " "+b.Version.String())
+		fmt.Println()
 	}
-	fmt.Println()
 
-	ui.PrintInfo("Cleaning build directory...")
+	if !b.Quiet {
+		ui.PrintInfo("Cleaning build directory...")
+	}
 	if err := os.RemoveAll(b.BuildDir); err != nil {
 		return fmt.Errorf("failed to clean build directory: %w", err)
 	}
@@ -105,7 +96,9 @@ func (b *Builder) Build() error {
 		return fmt.Errorf("failed to create stage directory: %w", err)
 	}
 
-	ui.PrintInfo("Copying plugin files...")
+	if !b.Quiet {
+		ui.PrintInfo("Copying plugin files...")
+	}
 
 	mainFile := filepath.Base(b.Config.Main)
 	mainSrc := filepath.Join(b.SourceDir, b.Config.Main)
@@ -146,18 +139,19 @@ func (b *Builder) Build() error {
 		}
 	}
 
-	for _, readme := range []string{"README.md", "readme.txt"} {
-		src := filepath.Join(b.SourceDir, readme)
-		if _, err := os.Stat(src); err == nil {
-			if err := b.copyFile(src, filepath.Join(stageDir, readme)); err != nil {
-				ui.PrintWarning("Failed to copy %s: %v", readme, err)
-			}
+	readmeSrc := filepath.Join(b.SourceDir, "readme.txt")
+	readmeDst := filepath.Join(stageDir, "readme.txt")
+	if _, err := os.Stat(readmeSrc); err == nil {
+		if err := b.copyFile(readmeSrc, readmeDst); err != nil {
+			ui.PrintWarning("Failed to copy readme.txt: %v", err)
+		}
+	} else {
+		if err := b.generateReadme(readmeDst); err != nil {
+			ui.PrintWarning("Failed to generate readme.txt: %v", err)
 		}
 	}
 
-	if b.Config.Obfuscate {
-		ui.PrintInfo("Obfuscating PHP files...")
-	} else {
+	if !b.Quiet {
 		ui.PrintInfo("Processing PHP files...")
 	}
 
@@ -181,14 +175,17 @@ func (b *Builder) Build() error {
 			return err
 		}
 
-		var output string
-		if b.Config.Obfuscate && strings.HasSuffix(info.Name(), ".php") {
-			output, err = obfuscator.Obfuscate(string(content))
-			if err != nil {
-				return fmt.Errorf("failed to obfuscate %s: %w", relPath, err)
+		output := string(content)
+
+		if strings.HasSuffix(info.Name(), ".php") {
+			output = b.replaceVersionConstants(output)
+
+			if b.Config.Obfuscate {
+				output, err = obfuscator.Obfuscate(output)
+				if err != nil {
+					return fmt.Errorf("failed to obfuscate %s: %w", relPath, err)
+				}
 			}
-		} else {
-			output = string(content)
 		}
 
 		return os.WriteFile(dstPath, []byte(output), info.Mode())
@@ -208,14 +205,18 @@ func (b *Builder) Build() error {
 
 	b.cleanDevFiles(stageDir)
 
-	ui.PrintInfo("Creating ZIP archive...")
+	if !b.Quiet {
+		ui.PrintInfo("Creating ZIP archive...")
+	}
 	zipPath := filepath.Join(b.BuildDir, fmt.Sprintf("%s-%s.zip", pluginName, b.Version.String()))
 	if err := b.createZip(stageDir, zipPath, pluginName); err != nil {
 		return fmt.Errorf("failed to create ZIP: %w", err)
 	}
 
-	fmt.Println()
-	ui.PrintSuccess("Created: %s", filepath.Base(zipPath))
+	if !b.Quiet {
+		fmt.Println()
+		ui.PrintSuccess("Created: %s", filepath.Base(zipPath))
+	}
 
 	return nil
 }
@@ -303,6 +304,16 @@ func (b *Builder) copyAndMinify(src, dst string) error {
 	return os.WriteFile(dst, []byte(minified), 0644)
 }
 
+func (b *Builder) replaceVersionConstants(content string) string {
+	pluginName := strings.ToUpper(b.sanitizeName(b.Config.Name))
+	pluginName = strings.ReplaceAll(pluginName, "-", "_")
+
+	re := regexp.MustCompile(`define\s*\(\s*['"]` + pluginName + `_VERSION['"]\s*,\s*['"][^'"]*['"]\s*\)`)
+	replacement := fmt.Sprintf("define('%s_VERSION', '%s')", pluginName, b.Version.String())
+
+	return re.ReplaceAllString(content, replacement)
+}
+
 func (b *Builder) generatePluginHeader(path string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -365,6 +376,43 @@ major=%d
 minor=%d
 maintenance=%s
 `, b.Config.Name, b.Version.Major, b.Version.Minor, b.Version.Maintenance)
+
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func (b *Builder) generateReadme(path string) error {
+	requires := b.Config.Requires
+	if requires == "" {
+		requires = "5.0"
+	}
+	requiresPHP := b.Config.RequiresPHP
+	if requiresPHP == "" {
+		requiresPHP = "7.4"
+	}
+	license := b.Config.License
+	if license == "" {
+		license = "GPLv2 or later"
+	}
+
+	content := fmt.Sprintf(`=== %s ===
+Contributors: %s
+Tags: wordpress
+Requires at least: %s
+Tested up to: 6.4
+Stable tag: %s
+Requires PHP: %s
+License: %s
+License URI: %s
+
+== Description ==
+
+%s
+
+== Installation ==
+
+1. Upload the plugin files to the /wp-content/plugins/ directory
+2. Activate the plugin through the 'Plugins' screen in WordPress
+`, b.Config.Name, b.Config.Author, requires, b.Version.String(), requiresPHP, license, b.Config.LicenseURI, b.Config.Description)
 
 	return os.WriteFile(path, []byte(content), 0644)
 }

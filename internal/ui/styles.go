@@ -98,3 +98,14 @@ func Divider() string {
 func PrintVersion(version string) {
 	fmt.Println(ValueStyle.Render(" Version: " + version))
 }
+
+// PrintHeader prints the standard header
+func PrintHeader(version string) {
+	fmt.Println()
+	fmt.Println(Divider())
+	fmt.Println(Banner())
+	PrintVersion(version)
+	fmt.Println()
+	fmt.Println(Divider())
+	fmt.Println()
+}
