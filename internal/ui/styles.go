@@ -94,9 +94,14 @@ func Divider() string {
 	return MutedStyle.Render("─────────────────────────────────────────")
 }
 
+// VersionLine returns the formatted version string
+func VersionLine(version string) string {
+	return ValueStyle.Render("                    v" + version)
+}
+
 // PrintVersion prints the version
 func PrintVersion(version string) {
-	fmt.Println(ValueStyle.Render(" Version: " + version))
+	fmt.Println(VersionLine(version))
 }
 
 // PrintHeader prints the standard header

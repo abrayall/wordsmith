@@ -4,7 +4,27 @@ A CLI tool for building WordPress plugins.
 
 ## Installation
 
+### Quick Install
+
+Download and install the latest binary with a single command:
+
+**macOS/Linux:**
 ```bash
+curl -sfL https://raw.githubusercontent.com/abrayall/wordsmith/refs/heads/main/install.sh | sh -
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/abrayall/wordsmith/refs/heads/main/install.ps1 | iex
+```
+
+### Build from Source
+
+Clone the repository and build/install locally:
+
+```bash
+git clone https://github.com/abrayall/wordsmith.git
+cd wordsmith
 ./install.sh
 ```
 

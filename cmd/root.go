@@ -14,7 +14,6 @@ var Version = "dev"
 var rootCmd = &cobra.Command{
 	Use:   "wordsmith",
 	Short: "WordPress plugin build tool",
-	Long:  ui.Banner() + "\n\n  A beautiful CLI tool for building WordPress plugins",
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
@@ -28,6 +27,7 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.Long = ui.Banner() + "\n" + ui.VersionLine(Version) + "\n\n  A beautiful CLI tool for building WordPress plugins"
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(initCmd)
 }
