@@ -89,6 +89,7 @@ var startCmd = &cobra.Command{
 			ui.PrintInfo("Password:  admin")
 			fmt.Println()
 			openBrowser(wpURL)
+			openBrowser(wpURL + "/wp-admin")
 			os.Exit(0)
 		}
 
@@ -127,6 +128,11 @@ var startCmd = &cobra.Command{
 				ui.PrintWarning("Auto-install failed: %v", err)
 				ui.PrintInfo("You may need to complete setup manually")
 			}
+
+			ui.PrintInfo("Deploying plugin...")
+			deployCmd := exec.Command(os.Args[0], "deploy", "--quiet")
+			deployCmd.Dir = dir
+			deployCmd.Run()
 		}
 
 		fmt.Println()
@@ -139,6 +145,7 @@ var startCmd = &cobra.Command{
 		fmt.Println()
 
 		openBrowser(wpURL)
+		openBrowser(wpURL + "/wp-admin")
 	},
 }
 
@@ -397,7 +404,7 @@ func installWordPress(pluginSlug string, port int, pluginName string) error {
 		"wordpress:cli",
 		"wp", "core", "install",
 		"--url=http://localhost:"+fmt.Sprintf("%d", port),
-		"--title=WordPress Dev",
+		"--title=WordPress "+pluginName,
 		"--admin_user=admin",
 		"--admin_password=admin",
 		"--admin_email=admin@localhost.com",
