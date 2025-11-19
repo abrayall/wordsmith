@@ -116,7 +116,7 @@ var deployCmd = &cobra.Command{
 
 			if !quiet {
 				fmt.Println()
-				ui.PrintInfo("Deploying plugin to WordPress...")
+				ui.PrintInfo("Deploying to WordPress...")
 			}
 
 			stageDir = fmt.Sprintf("%s/build/work/stage", dir)

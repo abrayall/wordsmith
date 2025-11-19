@@ -143,7 +143,7 @@ var startCmd = &cobra.Command{
 				ui.PrintInfo("You may need to complete setup manually")
 			}
 
-			ui.PrintInfo("Deploying plugin...")
+			ui.PrintInfo("Deploying...")
 			deployCmd := exec.Command(os.Args[0], "deploy", "--quiet")
 			deployCmd.Dir = dir
 			deployCmd.Run()

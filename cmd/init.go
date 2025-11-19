@@ -13,13 +13,20 @@ import (
 	"wordsmith/internal/ui"
 )
 
+var (
+	initName        string
+	initDescription string
+	initAuthor      string
+	initAuthorURI   string
+	initThemeType   string
+)
+
 var initCmd = &cobra.Command{
 	Use:   "init [plugin|theme]",
 	Short: "Initialize a new WordPress plugin or theme",
 	Long:  "Create a new plugin or theme with all necessary files and directories",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(ui.Banner())
-		fmt.Println()
+		ui.PrintHeader(Version)
 
 		dir, err := os.Getwd()
 		if err != nil {
@@ -38,39 +45,76 @@ var initCmd = &cobra.Command{
 			}
 		}
 
+		// Check if any flags were provided (non-interactive mode)
+		interactive := initName == "" && initDescription == "" && initAuthor == "" && initAuthorURI == "" && initThemeType == ""
+
 		if buildType == "theme" {
-			initTheme(dir)
+			initTheme(dir, interactive)
 		} else {
-			initPlugin(dir)
+			initPlugin(dir, interactive)
 		}
 	},
 }
 
-func initPlugin(dir string) {
+func init() {
+	initCmd.Flags().StringVar(&initName, "name", "", "Plugin/theme name")
+	initCmd.Flags().StringVar(&initDescription, "description", "", "Plugin/theme description")
+	initCmd.Flags().StringVar(&initAuthor, "author", "", "Author name")
+	initCmd.Flags().StringVar(&initAuthorURI, "author-uri", "", "Author website URL")
+	initCmd.Flags().StringVar(&initThemeType, "type", "", "Theme type: block, classic, or hybrid")
+}
+
+func initPlugin(dir string, interactive bool) {
+	// Get default name from directory
+	defaultName := formatName(filepath.Base(dir))
+
+	var name, description, author, authorURI string
+
+	if interactive {
+		reader := bufio.NewReader(os.Stdin)
+
+		// Ask questions
+		ui.PrintInfo("Let's set up your WordPress plugin!")
+		fmt.Println()
+
+		name = prompt(reader, "Plugin name", defaultName)
+		description = prompt(reader, "Description", "A WordPress plugin")
+		author = prompt(reader, "Author", "")
+		if author != "" {
+			authorURI = prompt(reader, "Author website", "")
+		}
+
+		fmt.Println()
+	} else {
+		// Non-interactive mode - use flags or defaults
+		name = initName
+		if name == "" {
+			name = defaultName
+		}
+		description = initDescription
+		if description == "" {
+			description = "A WordPress plugin"
+		}
+		author = initAuthor
+		authorURI = initAuthorURI
+	}
+
+	// If current directory is not empty, create subdirectory
+	if !isEmptyDir(dir) {
+		slug := sanitizeName(name)
+		newDir := filepath.Join(dir, slug)
+		if err := os.MkdirAll(newDir, 0755); err != nil {
+			ui.PrintError("Failed to create directory %s: %v", slug, err)
+			os.Exit(1)
+		}
+		dir = newDir
+	}
+
 	// Check if plugin.properties already exists
 	if config.PluginExists(dir) {
 		ui.PrintWarning("plugin.properties already exists")
 		os.Exit(1)
 	}
-
-	reader := bufio.NewReader(os.Stdin)
-
-	// Get default name from directory
-	defaultName := formatName(filepath.Base(dir))
-
-	// Ask questions
-	ui.PrintInfo("Let's set up your WordPress plugin!")
-	fmt.Println()
-
-	name := prompt(reader, "Plugin name", defaultName)
-	description := prompt(reader, "Description", "A WordPress plugin")
-	author := prompt(reader, "Author", "")
-	authorURI := ""
-	if author != "" {
-		authorURI = prompt(reader, "Author website", "")
-	}
-
-	fmt.Println()
 
 	// Generate slug from name
 	slug := sanitizeName(name)
@@ -170,49 +214,83 @@ func initPlugin(dir string) {
 	fmt.Println()
 }
 
-func initTheme(dir string) {
+func initTheme(dir string, interactive bool) {
+	// Get default name from directory
+	defaultName := formatName(filepath.Base(dir))
+
+	var name, description, author, authorURI, themeType string
+
+	if interactive {
+		reader := bufio.NewReader(os.Stdin)
+
+		// Ask questions
+		ui.PrintInfo("Let's set up your WordPress theme!")
+		fmt.Println()
+
+		name = prompt(reader, "Theme name", defaultName)
+		description = prompt(reader, "Description", "A WordPress theme")
+		author = prompt(reader, "Author", "")
+		if author != "" {
+			authorURI = prompt(reader, "Author website", "")
+		}
+
+		fmt.Println()
+		fmt.Println("  Theme type:")
+		fmt.Println("    1. Block    - Modern, uses Site Editor & block templates")
+		fmt.Println("    2. Classic  - Traditional PHP templates")
+		fmt.Println("    3. Hybrid   - Classic templates with theme.json (recommended)")
+		fmt.Println()
+		themeTypeInput := prompt(reader, "Choose type (1/2/3)", "3")
+
+		themeType = "hybrid"
+		switch themeTypeInput {
+		case "1", "block":
+			themeType = "block"
+		case "2", "classic":
+			themeType = "classic"
+		default:
+			themeType = "hybrid"
+		}
+
+		fmt.Println()
+	} else {
+		// Non-interactive mode - use flags or defaults
+		name = initName
+		if name == "" {
+			name = defaultName
+		}
+		description = initDescription
+		if description == "" {
+			description = "A WordPress theme"
+		}
+		author = initAuthor
+		authorURI = initAuthorURI
+
+		themeType = initThemeType
+		switch themeType {
+		case "block", "classic", "hybrid":
+			// Valid type
+		default:
+			themeType = "hybrid"
+		}
+	}
+
+	// If current directory is not empty, create subdirectory
+	if !isEmptyDir(dir) {
+		slug := sanitizeName(name)
+		newDir := filepath.Join(dir, slug)
+		if err := os.MkdirAll(newDir, 0755); err != nil {
+			ui.PrintError("Failed to create directory %s: %v", slug, err)
+			os.Exit(1)
+		}
+		dir = newDir
+	}
+
 	// Check if theme.properties already exists
 	if config.ThemeExists(dir) {
 		ui.PrintWarning("theme.properties already exists")
 		os.Exit(1)
 	}
-
-	reader := bufio.NewReader(os.Stdin)
-
-	// Get default name from directory
-	defaultName := formatName(filepath.Base(dir))
-
-	// Ask questions
-	ui.PrintInfo("Let's set up your WordPress theme!")
-	fmt.Println()
-
-	name := prompt(reader, "Theme name", defaultName)
-	description := prompt(reader, "Description", "A WordPress theme")
-	author := prompt(reader, "Author", "")
-	authorURI := ""
-	if author != "" {
-		authorURI = prompt(reader, "Author website", "")
-	}
-
-	fmt.Println()
-	fmt.Println("  Theme type:")
-	fmt.Println("    1. Block    - Modern, uses Site Editor & block templates")
-	fmt.Println("    2. Classic  - Traditional PHP templates")
-	fmt.Println("    3. Hybrid   - Classic templates with theme.json (recommended)")
-	fmt.Println()
-	themeTypeInput := prompt(reader, "Choose type (1/2/3)", "3")
-
-	themeType := "hybrid"
-	switch themeTypeInput {
-	case "1", "block":
-		themeType = "block"
-	case "2", "classic":
-		themeType = "classic"
-	default:
-		themeType = "hybrid"
-	}
-
-	fmt.Println()
 
 	// Generate slug from name
 	slug := sanitizeName(name)
@@ -1062,6 +1140,14 @@ func sanitizeName(name string) string {
 	re := regexp.MustCompile(`[^a-z0-9-]`)
 	result = re.ReplaceAllString(result, "")
 	return result
+}
+
+func isEmptyDir(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return true // Treat errors as empty
+	}
+	return len(entries) == 0
 }
 
 func generateMainPluginFile(name, description, author, authorURI, slug string) string {

@@ -1,12 +1,6 @@
 # Wordsmith
 
-WordPress plugin build tool written in Go.
-
-## Build Types
-
-- `dev` - No processing
-- `release` - Minify CSS/JS only
-- `prod` - Obfuscate PHP + minify CSS/JS
+WordPress plugin and theme build tool written in Go.
 
 ## Version Detection
 
