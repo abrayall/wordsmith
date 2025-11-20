@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,32 +32,29 @@ var startCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Determine the environment name - use plugin/theme name if available, otherwise use directory name
+		var envName string
 		isTheme := config.ThemeExists(dir)
 		isPlugin := config.PluginExists(dir)
 
-		if !isTheme && !isPlugin {
-			ui.PrintError("No plugin.properties or theme.properties found in current directory")
-			os.Exit(1)
-		}
-
-		var name string
 		if isTheme {
 			cfg, err := config.LoadThemeProperties(dir)
-			if err != nil {
-				ui.PrintError("Failed to load theme.properties: %v", err)
-				os.Exit(1)
+			if err == nil {
+				envName = cfg.Name
 			}
-			name = cfg.Name
-		} else {
+		} else if isPlugin {
 			cfg, err := config.LoadPluginProperties(dir)
-			if err != nil {
-				ui.PrintError("Failed to load plugin.properties: %v", err)
-				os.Exit(1)
+			if err == nil {
+				envName = cfg.Name
 			}
-			name = cfg.Name
 		}
 
-		pluginSlug := sanitizePluginName(name)
+		// Fall back to directory name if no plugin/theme found
+		if envName == "" {
+			envName = filepath.Base(dir)
+		}
+
+		pluginSlug := sanitizePluginName(envName)
 
 		if !isCommandAvailable("docker") {
 			ui.PrintError("Docker is not installed or not in PATH")
@@ -94,7 +92,7 @@ var startCmd = &cobra.Command{
 				ui.PrintInfo("Installing WordPress...")
 				port := 0
 				fmt.Sscanf(wpPort, "%d", &port)
-				if err := installWordPress(pluginSlug, port, name); err != nil {
+				if err := installWordPress(pluginSlug, port, envName); err != nil {
 					ui.PrintWarning("Auto-install failed: %v", err)
 				}
 			}
@@ -143,15 +141,10 @@ var startCmd = &cobra.Command{
 
 		if needsInstall(wpURL) {
 			ui.PrintInfo("Installing WordPress...")
-			if err := installWordPress(pluginSlug, wpPort, name); err != nil {
+			if err := installWordPress(pluginSlug, wpPort, envName); err != nil {
 				ui.PrintWarning("Auto-install failed: %v", err)
 				ui.PrintInfo("You may need to complete setup manually")
 			}
-
-			ui.PrintInfo("Deploying...")
-			deployCmd := exec.Command(os.Args[0], "deploy", "--quiet")
-			deployCmd.Dir = dir
-			deployCmd.Run()
 		}
 
 		fmt.Println()

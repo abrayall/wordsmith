@@ -8,50 +8,18 @@ import (
 	"strings"
 )
 
-// PluginConfig represents the plugin.properties configuration
-type PluginConfig struct {
-	Name        string
-	Version     string
-	Description string
-	Author      string
-	AuthorURI   string
-	PluginURI   string
-	License     string
-	LicenseURI  string
-	Main        string
-	TextDomain  string
-	DomainPath  string
-	Requires    string
-	RequiresPHP string
+// Properties represents a parsed properties/YAML file as a map
+type Properties map[string]string
 
-	// Additional files/directories to include (supports wildcards: *.php, **/*.php)
-	Include []string
-
-	// Files/directories to exclude (supports wildcards)
-	Exclude []string
-
-	// Obfuscate PHP files
-	Obfuscate bool
-
-	// Minify CSS/JS files
-	Minify bool
-}
-
-// LoadPluginProperties loads plugin configuration from plugin.properties file
-func LoadPluginProperties(dir string) (*PluginConfig, error) {
-	path := filepath.Join(dir, "plugin.properties")
+// ParseProperties parses a properties file supporting both = and : delimiters
+func ParseProperties(path string) (Properties, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open plugin.properties: %w", err)
+		return nil, fmt.Errorf("failed to open %s: %w", path, err)
 	}
 	defer file.Close()
 
-	config := &PluginConfig{
-		Include:   []string{},
-		Exclude:   []string{},
-		Obfuscate: false,
-		Minify:    false,
-	}
+	props := make(Properties)
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -62,85 +30,77 @@ func LoadPluginProperties(dir string) (*PluginConfig, error) {
 			continue
 		}
 
-		// Parse key=value
-		parts := strings.SplitN(line, "=", 2)
+		// Parse key=value or key: value (YAML-style)
+		var parts []string
+		if strings.Contains(line, "=") {
+			parts = strings.SplitN(line, "=", 2)
+		} else if strings.Contains(line, ":") {
+			parts = strings.SplitN(line, ":", 2)
+		}
 		if len(parts) != 2 {
 			continue
 		}
 
 		key := strings.TrimSpace(parts[0])
 		value := strings.TrimSpace(parts[1])
-
-		switch key {
-		case "name":
-			config.Name = value
-		case "version":
-			config.Version = value
-		case "description":
-			config.Description = value
-		case "author":
-			config.Author = value
-		case "author-uri":
-			config.AuthorURI = value
-		case "plugin-uri":
-			config.PluginURI = value
-		case "license":
-			config.License = value
-		case "license-uri":
-			config.LicenseURI = value
-		case "main":
-			config.Main = value
-		case "text-domain":
-			config.TextDomain = value
-		case "domain-path":
-			config.DomainPath = value
-		case "requires":
-			config.Requires = value
-		case "requires-php":
-			config.RequiresPHP = value
-		case "include":
-			// Parse comma-separated list
-			items := strings.Split(value, ",")
-			for _, item := range items {
-				item = strings.TrimSpace(item)
-				if item != "" {
-					config.Include = append(config.Include, item)
-				}
-			}
-		case "exclude":
-			// Parse comma-separated list
-			items := strings.Split(value, ",")
-			for _, item := range items {
-				item = strings.TrimSpace(item)
-				if item != "" {
-					config.Exclude = append(config.Exclude, item)
-				}
-			}
-		case "obfuscate":
-			config.Obfuscate = !(value == "false" || value == "no" || value == "0")
-		case "minify":
-			config.Minify = !(value == "false" || value == "no" || value == "0")
-		}
+		props[key] = value
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading plugin.properties: %w", err)
+		return nil, fmt.Errorf("error reading %s: %w", path, err)
 	}
 
-	// Validate required fields
-	if config.Name == "" {
-		return nil, fmt.Errorf("missing required field: name")
-	}
-	if config.Main == "" {
-		return nil, fmt.Errorf("missing required field: main")
-	}
-
-	return config, nil
+	return props, nil
 }
 
-// PluginExists checks if plugin.properties exists in the directory
-func PluginExists(dir string) bool {
-	path := filepath.Join(dir, "plugin.properties")
+// Get returns the value for a key, or empty string if not found
+func (p Properties) Get(key string) string {
+	return p[key]
+}
+
+// GetWithDefault returns the value for a key, or the default if not found
+func (p Properties) GetWithDefault(key, defaultValue string) string {
+	if val, ok := p[key]; ok && val != "" {
+		return val
+	}
+	return defaultValue
+}
+
+// GetBool returns true unless the value is "false", "no", or "0"
+func (p Properties) GetBool(key string) bool {
+	val := p[key]
+	if val == "" {
+		return false
+	}
+	return !(val == "false" || val == "no" || val == "0")
+}
+
+// GetList parses a comma-separated value into a slice
+func (p Properties) GetList(key string) []string {
+	val := p[key]
+	if val == "" {
+		return []string{}
+	}
+
+	var result []string
+	items := strings.Split(val, ",")
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// FileExists checks if a file exists at the given path
+func FileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// PropertiesFileExists checks if a properties file exists in the directory
+func PropertiesFileExists(dir, filename string) bool {
+	path := filepath.Join(dir, filename)
+	return FileExists(path)
 }

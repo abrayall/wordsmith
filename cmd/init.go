@@ -974,7 +974,7 @@ function %s_enqueue_scripts() {
     );
 }
 add_action('wp_enqueue_scripts', '%s_enqueue_scripts');
-`, name, constName, funcPrefix, slug, slug, slug, funcPrefix, funcPrefix, slug, slug, funcPrefix, funcPrefix, slug, constName, slug, constName, slug, constName, funcPrefix)
+`, name, constName, funcPrefix, slug, slug, slug, funcPrefix, funcPrefix, slug, slug, funcPrefix, funcPrefix, slug, constName, slug, slug, constName, slug, constName, funcPrefix)
 }
 
 func generateHybridFunctionsPHP(name, slug string) string {
@@ -1092,7 +1092,7 @@ function %s_enqueue_scripts() {
     );
 }
 add_action('wp_enqueue_scripts', '%s_enqueue_scripts');
-`, name, constName, funcPrefix, slug, slug, slug, funcPrefix, funcPrefix, slug, slug, funcPrefix, funcPrefix, slug, constName, slug, constName, slug, constName, funcPrefix)
+`, name, constName, funcPrefix, slug, slug, slug, funcPrefix, funcPrefix, slug, slug, funcPrefix, funcPrefix, slug, constName, slug, slug, constName, slug, constName, funcPrefix)
 }
 
 func generateIndexPHP(slug string) string {

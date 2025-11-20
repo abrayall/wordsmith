@@ -177,6 +177,11 @@ func (b *ThemeBuilder) Build() error {
 	// Clean dev files
 	b.cleanDevFiles(stageDir)
 
+	// Set permissions on all files before zipping
+	if err := chmodAll(stageDir, 0777); err != nil {
+		return fmt.Errorf("failed to set permissions: %w", err)
+	}
+
 	// Create ZIP
 	if !b.Quiet {
 		ui.PrintInfo("Creating ZIP archive...")

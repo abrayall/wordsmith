@@ -216,6 +216,11 @@ func (b *Builder) Build() error {
 
 	b.cleanDevFiles(stageDir)
 
+	// Set permissions on all files before zipping
+	if err := chmodAll(stageDir, 0777); err != nil {
+		return fmt.Errorf("failed to set permissions: %w", err)
+	}
+
 	if !b.Quiet {
 		ui.PrintInfo("Creating ZIP archive...")
 	}
@@ -540,5 +545,15 @@ func (b *Builder) createZip(sourceDir, zipPath, baseName string) error {
 
 		_, err = io.Copy(writer, file)
 		return err
+	})
+}
+
+// chmodAll recursively sets permissions on all files and directories
+func chmodAll(dir string, mode os.FileMode) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chmod(path, mode)
 	})
 }

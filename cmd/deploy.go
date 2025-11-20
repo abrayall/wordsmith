@@ -13,8 +13,9 @@ import (
 )
 
 var deployCmd = &cobra.Command{
-	Use:   "deploy",
+	Use:   "deploy [instance]",
 	Short: "Build and deploy plugin or theme to WordPress",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		quiet, _ := cmd.Flags().GetBool("quiet")
 		if !quiet {
@@ -35,6 +36,12 @@ var deployCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Get optional instance name from args
+		var instance string
+		if len(args) > 0 {
+			instance = args[0]
+		}
+
 		var slug string
 		var containerPath string
 		var stageDir string
@@ -47,11 +54,29 @@ var deployCmd = &cobra.Command{
 			}
 
 			slug = sanitizeForDocker(cfg.Name)
-			containerName := slug + "-wordpress"
+
+			// Use instance name if provided, otherwise use theme name
+			var containerName string
+			if instance != "" {
+				containerName = instance
+			} else {
+				containerName = slug + "-wordpress"
+			}
 
 			if !isContainerRunning(containerName) {
-				ui.PrintError("WordPress is not running. Run 'wordsmith wordpress start' first")
-				os.Exit(1)
+				if !quiet {
+					ui.PrintInfo("WordPress is not running, starting it...")
+					fmt.Println()
+				}
+				startCmd := exec.Command(os.Args[0], "wordpress", "start")
+				startCmd.Stdout = os.Stdout
+				startCmd.Stderr = os.Stderr
+				startCmd.Dir = dir
+				if err := startCmd.Run(); err != nil {
+					ui.PrintError("Failed to start WordPress: %v", err)
+					os.Exit(1)
+				}
+				fmt.Println()
 			}
 
 			b := builder.NewThemeBuilder(dir)
@@ -101,12 +126,16 @@ var deployCmd = &cobra.Command{
 			}
 
 			// Activate theme
-			networkName := slug + "-network"
+			instanceSlug := slug
+			if instance != "" {
+				instanceSlug = strings.TrimSuffix(instance, "-wordpress")
+			}
+			networkName := instanceSlug + "-network"
 			activateCmd := exec.Command("docker", "run", "--rm",
 				"--network", networkName,
 				"--user", "33:33",
-				"-v", slug+"-wp:/var/www/html",
-				"-e", "WORDPRESS_DB_HOST="+slug+"-mysql",
+				"-v", instanceSlug+"-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST="+instanceSlug+"-mysql",
 				"-e", "WORDPRESS_DB_USER=wordpress",
 				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
 				"-e", "WORDPRESS_DB_NAME=wordpress",
@@ -122,11 +151,29 @@ var deployCmd = &cobra.Command{
 			}
 
 			slug = sanitizeForDocker(cfg.Name)
-			containerName := slug + "-wordpress"
+
+			// Use instance name if provided, otherwise use plugin name
+			var containerName string
+			if instance != "" {
+				containerName = instance
+			} else {
+				containerName = slug + "-wordpress"
+			}
 
 			if !isContainerRunning(containerName) {
-				ui.PrintError("WordPress is not running. Run 'wordsmith wordpress start' first")
-				os.Exit(1)
+				if !quiet {
+					ui.PrintInfo("WordPress is not running, starting it...")
+					fmt.Println()
+				}
+				startCmd := exec.Command(os.Args[0], "wordpress", "start")
+				startCmd.Stdout = os.Stdout
+				startCmd.Stderr = os.Stderr
+				startCmd.Dir = dir
+				if err := startCmd.Run(); err != nil {
+					ui.PrintError("Failed to start WordPress: %v", err)
+					os.Exit(1)
+				}
+				fmt.Println()
 			}
 
 			b := builder.New(dir)
@@ -154,12 +201,16 @@ var deployCmd = &cobra.Command{
 			}
 
 			// Activate plugin
-			networkName := slug + "-network"
+			instanceSlug := slug
+			if instance != "" {
+				instanceSlug = strings.TrimSuffix(instance, "-wordpress")
+			}
+			networkName := instanceSlug + "-network"
 			activateCmd := exec.Command("docker", "run", "--rm",
 				"--network", networkName,
 				"--user", "33:33",
-				"-v", slug+"-wp:/var/www/html",
-				"-e", "WORDPRESS_DB_HOST="+slug+"-mysql",
+				"-v", instanceSlug+"-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST="+instanceSlug+"-mysql",
 				"-e", "WORDPRESS_DB_USER=wordpress",
 				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
 				"-e", "WORDPRESS_DB_NAME=wordpress",
