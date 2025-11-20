@@ -167,6 +167,11 @@ func (b *ThemeBuilder) Build() error {
 		if err := b.fetchParentTheme(); err != nil {
 			return fmt.Errorf("failed to fetch parent theme: %w", err)
 		}
+
+		// Update child theme's functions.php with parent style dependencies
+		if err := b.updateChildStyleDependencies(stageDir); err != nil {
+			ui.PrintWarning("Could not update style dependencies: %v", err)
+		}
 	}
 
 	// Clean dev files
@@ -495,6 +500,71 @@ func (b *ThemeBuilder) getThemeNameFromStyleCSS(dir string) string {
 // GetParentThemeName returns the template (parent theme slug)
 func (b *ThemeBuilder) GetParentThemeName() string {
 	return b.Config.Template
+}
+
+// GetParentStyleHandles returns the stylesheet handles from the parent theme
+func (b *ThemeBuilder) GetParentStyleHandles() []string {
+	parentPath := b.GetParentThemePath()
+	if parentPath == "" {
+		return nil
+	}
+
+	functionsPath := filepath.Join(parentPath, "functions.php")
+	content, err := os.ReadFile(functionsPath)
+	if err != nil {
+		return nil
+	}
+
+	// Find all wp_enqueue_style calls and extract handles
+	re := regexp.MustCompile(`wp_enqueue_style\s*\(\s*['"]([^'"]+)['"]`)
+	matches := re.FindAllStringSubmatch(string(content), -1)
+
+	var handles []string
+	for _, match := range matches {
+		if len(match) > 1 {
+			handles = append(handles, match[1])
+		}
+	}
+
+	return handles
+}
+
+// updateChildStyleDependencies updates the child theme's functions.php with parent style dependencies
+func (b *ThemeBuilder) updateChildStyleDependencies(stageDir string) error {
+	handles := b.GetParentStyleHandles()
+	if len(handles) == 0 {
+		return nil
+	}
+
+	functionsPath := filepath.Join(stageDir, "functions.php")
+	content, err := os.ReadFile(functionsPath)
+	if err != nil {
+		return err
+	}
+
+	// Build the new dependency array with all parent handles
+	var deps []string
+	for _, h := range handles {
+		deps = append(deps, fmt.Sprintf("'%s'", h))
+	}
+	newDeps := "array(" + strings.Join(deps, ", ") + ")"
+
+	// Find and replace the child CSS dependency array
+	// Look for pattern like: array('theme-style') in the child CSS enqueue
+	slug := b.sanitizeName(b.Config.Name)
+
+	// Match the specific enqueue for child.css with its dependency array
+	re := regexp.MustCompile(`(wp_enqueue_style\s*\(\s*'` + regexp.QuoteMeta(slug) + `-child'\s*,\s*[^,]+,\s*)array\s*\([^)]*\)`)
+
+	updated := re.ReplaceAllString(string(content), "${1}"+newDeps)
+
+	if updated == string(content) {
+		// Try alternate pattern - maybe the array reference is different
+		re = regexp.MustCompile(`(get_stylesheet_directory_uri\s*\(\s*\)\s*\.\s*'/assets/css/child\.css'\s*,\s*)array\s*\([^)]*\)`)
+		updated = re.ReplaceAllString(string(content), "${1}"+newDeps)
+	}
+
+	return os.WriteFile(functionsPath, []byte(updated), 0644)
 }
 
 func (b *ThemeBuilder) fetchParentTheme() error {

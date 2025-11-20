@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"wordsmith/internal/builder"
 	"wordsmith/internal/config"
 	"wordsmith/internal/ui"
 )
@@ -147,25 +148,35 @@ func hasChangesGeneric(dir string, mainFile string, includes []string, propsFile
 	checkFile(mainPath)
 
 	for _, include := range includes {
-		path := filepath.Join(dir, include)
-		info, err := os.Stat(path)
+		// Expand glob patterns
+		expanded, err := builder.ExpandGlob(dir, include)
 		if err != nil {
 			continue
 		}
 
-		if info.IsDir() {
-			filepath.Walk(path, func(p string, i os.FileInfo, e error) error {
-				if e != nil || i.IsDir() {
+		for _, relPath := range expanded {
+			path := filepath.Join(dir, relPath)
+			info, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+
+			if info.IsDir() {
+				filepath.Walk(path, func(p string, i os.FileInfo, e error) error {
+					if e != nil || i.IsDir() {
+						return nil
+					}
+					if strings.HasPrefix(i.Name(), ".") {
+						return nil
+					}
+					checkFile(p)
 					return nil
+				})
+			} else {
+				if !strings.HasPrefix(info.Name(), ".") {
+					checkFile(path)
 				}
-				if strings.HasPrefix(i.Name(), ".") {
-					return nil
-				}
-				checkFile(p)
-				return nil
-			})
-		} else {
-			checkFile(path)
+			}
 		}
 	}
 

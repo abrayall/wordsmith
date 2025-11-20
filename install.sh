@@ -148,5 +148,9 @@ esac
 echo ""
 log "${GREEN}✓ Installed wordsmith to ${INSTALL_DIR}/wordsmith${NC}"
 echo ""
+
+# Install shell completion silently
+"$INSTALL_DIR/wordsmith" completion install 2>/dev/null || true
+
 echo "Run 'wordsmith --help' to get started"
 echo ""
