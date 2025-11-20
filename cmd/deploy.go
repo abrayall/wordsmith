@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,7 +14,7 @@ import (
 )
 
 var deployCmd = &cobra.Command{
-	Use:   "deploy [instance]",
+	Use:   "deploy [file]",
 	Short: "Build and deploy plugin or theme to WordPress",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -36,11 +37,56 @@ var deployCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Get optional instance name from args
-		var instance string
+		// Determine which properties file to use for WordPress instance
+		var propsFile string
 		if len(args) > 0 {
-			instance = args[0]
+			// User provided a specific file
+			propsFile = args[0]
+			if !filepath.IsAbs(propsFile) {
+				propsFile = filepath.Join(dir, propsFile)
+			}
+			if !config.FileExists(propsFile) {
+				ui.PrintError("Properties file not found: %s", propsFile)
+				os.Exit(1)
+			}
+		} else {
+			// Check for wordpress.properties first, then use plugin/theme name
+			wpProps := filepath.Join(dir, "wordpress.properties")
+			if config.FileExists(wpProps) {
+				propsFile = wpProps
+			}
 		}
+
+		// Determine WordPress instance name
+		var instanceName string
+		if propsFile != "" {
+			filename := filepath.Base(propsFile)
+			if filename == "wordpress.properties" {
+				wpConfig, err := config.LoadWordPressProperties(filepath.Dir(propsFile))
+				if err != nil {
+					ui.PrintError("Failed to load %s: %v", filename, err)
+					os.Exit(1)
+				}
+				instanceName = wpConfig.Name
+			}
+		}
+
+		// Fall back to plugin/theme name
+		if instanceName == "" {
+			if isTheme {
+				cfg, err := config.LoadThemeProperties(dir)
+				if err == nil {
+					instanceName = cfg.Name
+				}
+			} else if isPlugin {
+				cfg, err := config.LoadPluginProperties(dir)
+				if err == nil {
+					instanceName = cfg.Name
+				}
+			}
+		}
+
+		instanceSlug := sanitizeForDocker(instanceName)
 
 		var slug string
 		var containerPath string
@@ -55,20 +101,20 @@ var deployCmd = &cobra.Command{
 
 			slug = sanitizeForDocker(cfg.Name)
 
-			// Use instance name if provided, otherwise use theme name
-			var containerName string
-			if instance != "" {
-				containerName = instance
-			} else {
-				containerName = slug + "-wordpress"
-			}
-
+			// Check if WordPress container is running
+			containerName := instanceSlug + "-wordpress"
 			if !isContainerRunning(containerName) {
 				if !quiet {
 					ui.PrintInfo("WordPress is not running, starting it...")
 					fmt.Println()
 				}
-				startCmd := exec.Command(os.Args[0], "wordpress", "start")
+				var startArgs []string
+				startArgs = append(startArgs, "wordpress", "start")
+				if propsFile != "" {
+					startArgs = append(startArgs, propsFile)
+				}
+				startArgs = append(startArgs, "--quiet")
+				startCmd := exec.Command(os.Args[0], startArgs...)
 				startCmd.Stdout = os.Stdout
 				startCmd.Stderr = os.Stderr
 				startCmd.Dir = dir
@@ -126,10 +172,6 @@ var deployCmd = &cobra.Command{
 			}
 
 			// Activate theme
-			instanceSlug := slug
-			if instance != "" {
-				instanceSlug = strings.TrimSuffix(instance, "-wordpress")
-			}
 			networkName := instanceSlug + "-network"
 			activateCmd := exec.Command("docker", "run", "--rm",
 				"--network", networkName,
@@ -152,20 +194,20 @@ var deployCmd = &cobra.Command{
 
 			slug = sanitizeForDocker(cfg.Name)
 
-			// Use instance name if provided, otherwise use plugin name
-			var containerName string
-			if instance != "" {
-				containerName = instance
-			} else {
-				containerName = slug + "-wordpress"
-			}
-
+			// Check if WordPress container is running
+			containerName := instanceSlug + "-wordpress"
 			if !isContainerRunning(containerName) {
 				if !quiet {
 					ui.PrintInfo("WordPress is not running, starting it...")
 					fmt.Println()
 				}
-				startCmd := exec.Command(os.Args[0], "wordpress", "start")
+				var startArgs []string
+				startArgs = append(startArgs, "wordpress", "start")
+				if propsFile != "" {
+					startArgs = append(startArgs, propsFile)
+				}
+				startArgs = append(startArgs, "--quiet")
+				startCmd := exec.Command(os.Args[0], startArgs...)
 				startCmd.Stdout = os.Stdout
 				startCmd.Stderr = os.Stderr
 				startCmd.Dir = dir
@@ -201,10 +243,6 @@ var deployCmd = &cobra.Command{
 			}
 
 			// Activate plugin
-			instanceSlug := slug
-			if instance != "" {
-				instanceSlug = strings.TrimSuffix(instance, "-wordpress")
-			}
 			networkName := instanceSlug + "-network"
 			activateCmd := exec.Command("docker", "run", "--rm",
 				"--network", networkName,

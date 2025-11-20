@@ -21,10 +21,14 @@ var wordpressCmd = &cobra.Command{
 }
 
 var startCmd = &cobra.Command{
-	Use:   "start",
+	Use:   "start [file]",
 	Short: "Start WordPress in Docker",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ui.PrintHeader(Version)
+		quiet, _ := cmd.Flags().GetBool("quiet")
+		if !quiet {
+			ui.PrintHeader(Version)
+		}
 
 		dir, err := os.Getwd()
 		if err != nil {
@@ -32,24 +36,93 @@ var startCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Determine the environment name - use plugin/theme name if available, otherwise use directory name
-		var envName string
-		isTheme := config.ThemeExists(dir)
-		isPlugin := config.PluginExists(dir)
-
-		if isTheme {
-			cfg, err := config.LoadThemeProperties(dir)
-			if err == nil {
-				envName = cfg.Name
+		// Determine which properties file to use
+		var propsFile string
+		if len(args) > 0 {
+			// User provided a specific file
+			propsFile = args[0]
+			if !filepath.IsAbs(propsFile) {
+				propsFile = filepath.Join(dir, propsFile)
 			}
-		} else if isPlugin {
-			cfg, err := config.LoadPluginProperties(dir)
-			if err == nil {
-				envName = cfg.Name
+			if !config.FileExists(propsFile) {
+				ui.PrintError("Properties file not found: %s", propsFile)
+				os.Exit(1)
+			}
+		} else {
+			// Check for wordpress.properties, then plugin/theme
+			wpProps := filepath.Join(dir, "wordpress.properties")
+			pluginProps := filepath.Join(dir, "plugin.properties")
+			themeProps := filepath.Join(dir, "theme.properties")
+
+			if config.FileExists(wpProps) {
+				propsFile = wpProps
+			} else if config.FileExists(pluginProps) {
+				propsFile = pluginProps
+			} else if config.FileExists(themeProps) {
+				propsFile = themeProps
+			} else {
+				ui.PrintError("No properties file found")
+				ui.PrintInfo("Create wordpress.properties, plugin.properties, or theme.properties")
+				os.Exit(1)
 			}
 		}
 
-		// Fall back to directory name if no plugin/theme found
+		// Load configuration based on file type
+		var wpConfig *config.WordPressConfig
+		var dockerImage string = "wordpress:latest"
+		var envName string
+
+		filename := filepath.Base(propsFile)
+		switch filename {
+		case "wordpress.properties":
+			wpConfig, err = config.LoadWordPressProperties(filepath.Dir(propsFile))
+			if err != nil {
+				ui.PrintError("Failed to load %s: %v", filename, err)
+				os.Exit(1)
+			}
+			dockerImage = wpConfig.Image
+			envName = wpConfig.Name
+		case "plugin.properties":
+			cfg, err := config.LoadPluginProperties(filepath.Dir(propsFile))
+			if err != nil {
+				ui.PrintError("Failed to load %s: %v", filename, err)
+				os.Exit(1)
+			}
+			envName = cfg.Name
+		case "theme.properties":
+			cfg, err := config.LoadThemeProperties(filepath.Dir(propsFile))
+			if err != nil {
+				ui.PrintError("Failed to load %s: %v", filename, err)
+				os.Exit(1)
+			}
+			envName = cfg.Name
+		default:
+			// Try to parse as wordpress.properties format
+			wpConfig, err = config.LoadWordPressProperties(filepath.Dir(propsFile))
+			if err != nil {
+				ui.PrintError("Failed to load %s: %v", propsFile, err)
+				os.Exit(1)
+			}
+			dockerImage = wpConfig.Image
+			envName = wpConfig.Name
+		}
+
+		// If no name found, fall back to plugin/theme name, then directory name
+		if envName == "" {
+			if config.PluginExists(dir) {
+				cfg, err := config.LoadPluginProperties(dir)
+				if err == nil {
+					envName = cfg.Name
+				}
+			} else if config.ThemeExists(dir) {
+				cfg, err := config.LoadThemeProperties(dir)
+				if err == nil {
+					envName = cfg.Name
+				}
+			}
+		}
+
+		// Final fall back to directory name
 		if envName == "" {
 			envName = filepath.Base(dir)
 		}
@@ -126,7 +199,7 @@ var startCmd = &cobra.Command{
 
 		fmt.Printf("\033[38;2;59;130;246m• Using ports - WordPress: \033[0m%s\033[38;2;59;130;246m, MySQL: \033[0m%s\n", ui.Highlight(fmt.Sprintf("%d", wpPort)), ui.Highlight(fmt.Sprintf("%d", mysqlPort)))
 
-		if err := startContainers(pluginSlug, dir, wpPort, mysqlPort); err != nil {
+		if err := startContainers(pluginSlug, dir, wpPort, mysqlPort, dockerImage); err != nil {
 			ui.PrintError("Failed to start containers: %v", err)
 			os.Exit(1)
 		}
@@ -147,6 +220,19 @@ var startCmd = &cobra.Command{
 			}
 		}
 
+		// Install plugins and themes from wordpress.properties
+		if wpConfig != nil {
+			if len(wpConfig.Plugins) > 0 {
+				fmt.Println()
+				ui.PrintInfo("Installing plugins...")
+				installPluginsAndThemes(pluginSlug, wpConfig)
+			} else if len(wpConfig.Themes) > 0 {
+				fmt.Println()
+				ui.PrintInfo("Installing themes...")
+				installPluginsAndThemes(pluginSlug, wpConfig)
+			}
+		}
+
 		fmt.Println()
 		ui.PrintSuccess("WordPress is running!")
 		fmt.Println()
@@ -162,43 +248,61 @@ var startCmd = &cobra.Command{
 }
 
 var stopCmd = &cobra.Command{
-	Use:   "stop",
+	Use:   "stop [name]",
 	Short: "Stop WordPress Docker environment",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ui.PrintHeader(Version)
 
-		dir, err := os.Getwd()
-		if err != nil {
-			ui.PrintError("Failed to get current directory: %v", err)
-			os.Exit(1)
-		}
+		var pluginSlug string
 
-		isTheme := config.ThemeExists(dir)
-		isPlugin := config.PluginExists(dir)
-
-		if !isTheme && !isPlugin {
-			ui.PrintError("No plugin.properties or theme.properties found in current directory")
-			os.Exit(1)
-		}
-
-		var name string
-		if isTheme {
-			cfg, err := config.LoadThemeProperties(dir)
-			if err != nil {
-				ui.PrintError("Failed to load theme.properties: %v", err)
+		if len(args) > 0 {
+			// User provided instance name
+			instance := args[0]
+			if isContainerRunning(instance) || containerExists(instance) {
+				pluginSlug = instance
+			} else if isContainerRunning(instance+"-wordpress") || containerExists(instance+"-wordpress") {
+				pluginSlug = instance
+			} else {
+				ui.PrintError("WordPress container '%s' not found", instance)
 				os.Exit(1)
 			}
-			name = cfg.Name
 		} else {
-			cfg, err := config.LoadPluginProperties(dir)
+			// Get from properties files
+			dir, err := os.Getwd()
 			if err != nil {
-				ui.PrintError("Failed to load plugin.properties: %v", err)
+				ui.PrintError("Failed to get current directory: %v", err)
 				os.Exit(1)
 			}
-			name = cfg.Name
-		}
 
-		pluginSlug := sanitizePluginName(name)
+			isTheme := config.ThemeExists(dir)
+			isPlugin := config.PluginExists(dir)
+
+			if !isTheme && !isPlugin {
+				ui.PrintError("No plugin.properties or theme.properties found in current directory")
+				ui.PrintInfo("Specify instance name: wordsmith wordpress stop <name>")
+				os.Exit(1)
+			}
+
+			var name string
+			if isTheme {
+				cfg, err := config.LoadThemeProperties(dir)
+				if err != nil {
+					ui.PrintError("Failed to load theme.properties: %v", err)
+					os.Exit(1)
+				}
+				name = cfg.Name
+			} else {
+				cfg, err := config.LoadPluginProperties(dir)
+				if err != nil {
+					ui.PrintError("Failed to load plugin.properties: %v", err)
+					os.Exit(1)
+				}
+				name = cfg.Name
+			}
+
+			pluginSlug = sanitizePluginName(name)
+		}
 
 		ui.PrintInfo("Stopping WordPress environment [%s]...", pluginSlug)
 
@@ -241,43 +345,53 @@ var browseCmd = &cobra.Command{
 }
 
 var deleteCmd = &cobra.Command{
-	Use:   "delete",
+	Use:   "delete [name]",
 	Short: "Delete WordPress environment and all data",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ui.PrintHeader(Version)
 
-		dir, err := os.Getwd()
-		if err != nil {
-			ui.PrintError("Failed to get current directory: %v", err)
-			os.Exit(1)
-		}
+		var pluginSlug string
 
-		isTheme := config.ThemeExists(dir)
-		isPlugin := config.PluginExists(dir)
-
-		if !isTheme && !isPlugin {
-			ui.PrintError("No plugin.properties or theme.properties found in current directory")
-			os.Exit(1)
-		}
-
-		var name string
-		if isTheme {
-			cfg, err := config.LoadThemeProperties(dir)
-			if err != nil {
-				ui.PrintError("Failed to load theme.properties: %v", err)
-				os.Exit(1)
-			}
-			name = cfg.Name
+		if len(args) > 0 {
+			// User provided instance name
+			pluginSlug = args[0]
 		} else {
-			cfg, err := config.LoadPluginProperties(dir)
+			// Get from properties files
+			dir, err := os.Getwd()
 			if err != nil {
-				ui.PrintError("Failed to load plugin.properties: %v", err)
+				ui.PrintError("Failed to get current directory: %v", err)
 				os.Exit(1)
 			}
-			name = cfg.Name
-		}
 
-		pluginSlug := sanitizePluginName(name)
+			isTheme := config.ThemeExists(dir)
+			isPlugin := config.PluginExists(dir)
+
+			if !isTheme && !isPlugin {
+				ui.PrintError("No plugin.properties or theme.properties found in current directory")
+				ui.PrintInfo("Specify instance name: wordsmith wordpress delete <name>")
+				os.Exit(1)
+			}
+
+			var name string
+			if isTheme {
+				cfg, err := config.LoadThemeProperties(dir)
+				if err != nil {
+					ui.PrintError("Failed to load theme.properties: %v", err)
+					os.Exit(1)
+				}
+				name = cfg.Name
+			} else {
+				cfg, err := config.LoadPluginProperties(dir)
+				if err != nil {
+					ui.PrintError("Failed to load plugin.properties: %v", err)
+					os.Exit(1)
+				}
+				name = cfg.Name
+			}
+
+			pluginSlug = sanitizePluginName(name)
+		}
 
 		ui.PrintInfo("Deleting WordPress environment [%s]...", pluginSlug)
 
@@ -297,6 +411,7 @@ var deleteCmd = &cobra.Command{
 }
 
 func init() {
+	startCmd.Flags().BoolP("quiet", "q", false, "Suppress header output")
 	wordpressCmd.AddCommand(startCmd)
 	wordpressCmd.AddCommand(stopCmd)
 	wordpressCmd.AddCommand(browseCmd)
@@ -388,7 +503,7 @@ func getContainerPort(name string) string {
 	return ""
 }
 
-func startContainers(pluginSlug, projectDir string, wpPort, mysqlPort int) error {
+func startContainers(pluginSlug, projectDir string, wpPort, mysqlPort int, dockerImage string) error {
 	networkName := pluginSlug + "-network"
 	exec.Command("docker", "network", "create", networkName).Run()
 
@@ -416,7 +531,7 @@ func startContainers(pluginSlug, projectDir string, wpPort, mysqlPort int) error
 		"-e", "WORDPRESS_DB_PASSWORD=wordpress",
 		"-e", "WORDPRESS_DB_NAME=wordpress",
 		"-v", pluginSlug+"-wp:/var/www/html",
-		"wordpress:latest",
+		dockerImage,
 	)
 	_ = projectDir
 	if err := wpCmd.Run(); err != nil {
@@ -535,4 +650,182 @@ func installWordPress(pluginSlug string, port int, pluginName string) error {
 	_ = containerName
 
 	return nil
+}
+
+// installPluginsAndThemes installs plugins and themes from wordpress.properties
+func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig) {
+	networkName := pluginSlug + "-network"
+	mysqlContainer := pluginSlug + "-mysql"
+
+	// Install plugins
+	for _, plugin := range wpConfig.Plugins {
+		var installCmd *exec.Cmd
+
+		if plugin.URI != "" {
+			// Install from URI (URL or file path)
+			if strings.HasPrefix(plugin.URI, "http://") || strings.HasPrefix(plugin.URI, "https://") {
+				// Install from URL
+				ui.PrintInfo("  Installing plugin '%s' from URL...", plugin.Slug)
+				installCmd = exec.Command("docker", "run", "--rm",
+					"--network", networkName,
+					"--user", "33:33",
+					"-v", pluginSlug+"-wp:/var/www/html",
+					"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+					"-e", "WORDPRESS_DB_USER=wordpress",
+					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+					"-e", "WORDPRESS_DB_NAME=wordpress",
+					"wordpress:cli",
+					"wp", "plugin", "install", plugin.URI,
+				)
+			} else {
+				// Install from local file path - copy to container first
+				ui.PrintInfo("  Installing plugin '%s' from file...", plugin.Slug)
+				containerPath := fmt.Sprintf("/tmp/%s.zip", plugin.Slug)
+
+				// Copy file to container
+				copyCmd := exec.Command("docker", "cp", plugin.URI, pluginSlug+"-wordpress:"+containerPath)
+				if err := copyCmd.Run(); err != nil {
+					ui.PrintWarning("  Failed to copy plugin file: %v", err)
+					continue
+				}
+
+				installCmd = exec.Command("docker", "run", "--rm",
+					"--network", networkName,
+					"--user", "33:33",
+					"-v", pluginSlug+"-wp:/var/www/html",
+					"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+					"-e", "WORDPRESS_DB_USER=wordpress",
+					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+					"-e", "WORDPRESS_DB_NAME=wordpress",
+					"wordpress:cli",
+					"wp", "plugin", "install", containerPath,
+				)
+			}
+		} else {
+			// Install from WordPress.org
+			ui.PrintInfo("  Installing plugin '%s'...", plugin.Slug)
+			installArgs := []string{"run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", pluginSlug + "-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST=" + mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "plugin", "install", plugin.Slug,
+			}
+			if plugin.Version != "" {
+				installArgs = append(installArgs, "--version="+plugin.Version)
+			}
+			installCmd = exec.Command("docker", installArgs...)
+		}
+
+		if err := installCmd.Run(); err != nil {
+			ui.PrintWarning("  Failed to install plugin '%s': %v", plugin.Slug, err)
+			continue
+		}
+
+		// Activate if requested
+		if plugin.Active {
+			activateCmd := exec.Command("docker", "run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", pluginSlug+"-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "plugin", "activate", plugin.Slug,
+			)
+			activateCmd.Run()
+		}
+	}
+
+	// Install themes
+	for _, theme := range wpConfig.Themes {
+		var installCmd *exec.Cmd
+
+		if theme.URI != "" {
+			// Install from URI (URL or file path)
+			if strings.HasPrefix(theme.URI, "http://") || strings.HasPrefix(theme.URI, "https://") {
+				// Install from URL
+				ui.PrintInfo("  Installing theme '%s' from URL...", theme.Slug)
+				installCmd = exec.Command("docker", "run", "--rm",
+					"--network", networkName,
+					"--user", "33:33",
+					"-v", pluginSlug+"-wp:/var/www/html",
+					"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+					"-e", "WORDPRESS_DB_USER=wordpress",
+					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+					"-e", "WORDPRESS_DB_NAME=wordpress",
+					"wordpress:cli",
+					"wp", "theme", "install", theme.URI,
+				)
+			} else {
+				// Install from local file path
+				ui.PrintInfo("  Installing theme '%s' from file...", theme.Slug)
+				containerPath := fmt.Sprintf("/tmp/%s.zip", theme.Slug)
+
+				// Copy file to container
+				copyCmd := exec.Command("docker", "cp", theme.URI, pluginSlug+"-wordpress:"+containerPath)
+				if err := copyCmd.Run(); err != nil {
+					ui.PrintWarning("  Failed to copy theme file: %v", err)
+					continue
+				}
+
+				installCmd = exec.Command("docker", "run", "--rm",
+					"--network", networkName,
+					"--user", "33:33",
+					"-v", pluginSlug+"-wp:/var/www/html",
+					"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+					"-e", "WORDPRESS_DB_USER=wordpress",
+					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+					"-e", "WORDPRESS_DB_NAME=wordpress",
+					"wordpress:cli",
+					"wp", "theme", "install", containerPath,
+				)
+			}
+		} else {
+			// Install from WordPress.org
+			ui.PrintInfo("  Installing theme '%s'...", theme.Slug)
+			installArgs := []string{"run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", pluginSlug + "-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST=" + mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "theme", "install", theme.Slug,
+			}
+			if theme.Version != "" {
+				installArgs = append(installArgs, "--version="+theme.Version)
+			}
+			installCmd = exec.Command("docker", installArgs...)
+		}
+
+		if err := installCmd.Run(); err != nil {
+			ui.PrintWarning("  Failed to install theme '%s': %v", theme.Slug, err)
+			continue
+		}
+
+		// Activate if requested
+		if theme.Active {
+			activateCmd := exec.Command("docker", "run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", pluginSlug+"-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "theme", "activate", theme.Slug,
+			)
+			activateCmd.Run()
+		}
+	}
 }

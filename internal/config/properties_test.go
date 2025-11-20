@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -253,6 +254,133 @@ plugin-uri=http://plugin.example.com:8080/path
 	}
 	if cfg.PluginURI != "http://plugin.example.com:8080/path" {
 		t.Errorf("PluginURI = %q, want %q", cfg.PluginURI, "http://plugin.example.com:8080/path")
+	}
+}
+
+func TestYAMLListSyntax(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "yaml_list_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test YAML list syntax with - items
+	content := `name: My Plugin
+main: plugin.php
+include:
+  - src
+  - "*.php"
+  - assets/js
+  - assets/css
+exclude:
+  - tests
+  - node_modules
+`
+	propsPath := filepath.Join(tmpDir, "plugin.properties")
+	err = os.WriteFile(propsPath, []byte(content), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadPluginProperties(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadPluginProperties error: %v", err)
+	}
+
+	if cfg.Name != "My Plugin" {
+		t.Errorf("Name = %q, want %q", cfg.Name, "My Plugin")
+	}
+	if len(cfg.Include) != 4 {
+		t.Errorf("Include count = %d, want 4. Got: %v", len(cfg.Include), cfg.Include)
+	}
+	if len(cfg.Exclude) != 2 {
+		t.Errorf("Exclude count = %d, want 2. Got: %v", len(cfg.Exclude), cfg.Exclude)
+	}
+
+	// Check specific items
+	expectedIncludes := []string{"src", "*.php", "assets/js", "assets/css"}
+	for i, expected := range expectedIncludes {
+		if i < len(cfg.Include) && cfg.Include[i] != expected {
+			t.Errorf("Include[%d] = %q, want %q", i, cfg.Include[i], expected)
+		}
+	}
+}
+
+func TestYAMLNestedStructure(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "yaml_nested_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test that basic YAML with quoted strings works
+	content := `name: My Plugin
+main: plugin.php
+description: "This is a description with special chars: @#$%"
+version: "1.0.0"
+`
+	propsPath := filepath.Join(tmpDir, "plugin.properties")
+	err = os.WriteFile(propsPath, []byte(content), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadPluginProperties(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadPluginProperties error: %v", err)
+	}
+
+	if cfg.Name != "My Plugin" {
+		t.Errorf("Name = %q, want %q", cfg.Name, "My Plugin")
+	}
+	if !strings.Contains(cfg.Description, "special chars") {
+		t.Errorf("Description should contain 'special chars', got: %q", cfg.Description)
+	}
+	if cfg.Version != "1.0.0" {
+		t.Errorf("Version = %q, want %q", cfg.Version, "1.0.0")
+	}
+}
+
+func TestMixedPropertiesAndYAMLLists(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "mixed_list_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Mix properties syntax with YAML lists
+	content := `name=My Theme
+version=1.0.0
+main=style.css
+include:
+  - "*.php"
+  - templates
+  - assets
+exclude=build, node_modules
+minify=true
+`
+	propsPath := filepath.Join(tmpDir, "theme.properties")
+	err = os.WriteFile(propsPath, []byte(content), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadThemeProperties(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadThemeProperties error: %v", err)
+	}
+
+	if cfg.Name != "My Theme" {
+		t.Errorf("Name = %q, want %q", cfg.Name, "My Theme")
+	}
+	if len(cfg.Include) != 3 {
+		t.Errorf("Include count = %d, want 3. Got: %v", len(cfg.Include), cfg.Include)
+	}
+	if len(cfg.Exclude) != 2 {
+		t.Errorf("Exclude count = %d, want 2. Got: %v", len(cfg.Exclude), cfg.Exclude)
+	}
+	if !cfg.Minify {
+		t.Error("Minify should be true")
 	}
 }
 
