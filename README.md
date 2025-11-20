@@ -115,6 +115,11 @@ wordsmith wordpress browse        # opens frontend
 wordsmith wordpress browse admin  # opens admin panel
 ```
 
+List all WordPress environments:
+```bash
+wordsmith wordpress ps
+```
+
 ### Deploy
 
 Build and deploy to the running WordPress container:
