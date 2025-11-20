@@ -87,21 +87,26 @@ Start a local WordPress instance in Docker:
 
 ```bash
 wordsmith wordpress start
+wordsmith wordpress start [file]           # use specific properties file
+wordsmith wordpress start --quiet          # suppress header output
 ```
 
 This will:
 - Start MySQL and WordPress containers
 - Auto-install WordPress with admin/admin credentials
+- Install plugins/themes from wordpress.properties (if present)
 - Open the browser to your local WordPress site
 
 Stop the environment:
 ```bash
 wordsmith wordpress stop
+wordsmith wordpress stop [name]            # stop specific instance
 ```
 
 Delete the environment and all data:
 ```bash
 wordsmith wordpress delete
+wordsmith wordpress delete [name]          # delete specific instance
 ```
 
 Open WordPress in browser:
@@ -116,7 +121,10 @@ Build and deploy to the running WordPress container:
 
 ```bash
 wordsmith deploy
+wordsmith deploy [file]            # use specific properties file for WordPress instance
 ```
+
+If WordPress is not running, deploy will automatically start it using the properties file.
 
 ### Watch for Changes
 
@@ -127,6 +135,40 @@ wordsmith watch
 ```
 
 ## Configuration
+
+Configuration files support both properties syntax (`key=value`) and YAML syntax (`key: value`). You can mix both in the same file.
+
+### wordpress.properties
+
+Define WordPress environment settings, plugins, and themes to install:
+
+```yaml
+# Instance name (optional, defaults to plugin/theme name or directory)
+name: my-site
+
+# Docker image (defaults to wordpress:latest)
+image: wordpress:6.4-php8.2
+
+# Plugins to install (active: true is default)
+plugins:
+  - akismet                           # simple slug from WordPress.org
+  - slug: woocommerce
+    version: 8.0.0                    # specific version
+    active: true
+  - slug: custom-plugin
+    uri: https://example.com/plugin.zip   # install from URL
+  - slug: local-plugin
+    uri: /path/to/plugin.zip          # install from local file
+
+# Themes to install (first theme defaults to active)
+themes:
+  - twentytwentyfour
+  - slug: astra
+    version: 4.0.0
+    active: true
+  - slug: custom-theme
+    uri: https://example.com/theme.zip
+```
 
 ### plugin.properties
 
@@ -197,6 +239,26 @@ Use glob patterns in includes and excludes:
 - `*.php` - All PHP files in root
 - `**/*.php` - All PHP files recursively
 - `assets` - Entire directory (automatically includes all contents)
+
+### YAML Syntax
+
+You can also use YAML syntax in plugin.properties and theme.properties:
+
+```yaml
+name: My Plugin
+description: A WordPress plugin
+author: Your Name
+
+# YAML lists for includes
+include:
+  - includes
+  - assets
+  - "*.php"
+
+exclude:
+  - node_modules
+  - tests
+```
 
 ## License
 
