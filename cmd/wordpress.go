@@ -18,6 +18,10 @@ import (
 var wordpressCmd = &cobra.Command{
 	Use:   "wordpress",
 	Short: "Manage WordPress development environment",
+	Run: func(cmd *cobra.Command, args []string) {
+		ui.PrintHeader(Version)
+		cmd.Help()
+	},
 }
 
 var startCmd = &cobra.Command{
@@ -344,6 +348,144 @@ var browseCmd = &cobra.Command{
 	},
 }
 
+var psCmd = &cobra.Command{
+	Use:   "ps",
+	Short: "List WordPress environments",
+	Run: func(cmd *cobra.Command, args []string) {
+		ui.PrintHeader(Version)
+
+		// Get all wordsmith containers (filter by wordsmith.project label existence)
+		dockerCmd := exec.Command("docker", "ps", "-a",
+			"--filter", "label=wordsmith.project",
+			"--format", "{{.Label \"wordsmith.project\"}}|{{.Label \"wordsmith.type\"}}|{{.Status}}|{{.Ports}}",
+		)
+		output, err := dockerCmd.Output()
+		if err != nil {
+			ui.PrintError("Failed to list containers: %v", err)
+			os.Exit(1)
+		}
+
+		// Parse output and group by project
+		projects := make(map[string]map[string]struct {
+			status string
+			port   string
+		})
+
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			parts := strings.Split(line, "|")
+			if len(parts) < 4 {
+				continue
+			}
+			project := parts[0]
+			containerType := parts[1]
+			status := parts[2]
+			ports := parts[3]
+
+			if projects[project] == nil {
+				projects[project] = make(map[string]struct {
+					status string
+					port   string
+				})
+			}
+
+			// Extract port number
+			port := ""
+			if ports != "" {
+				// Parse port like "0.0.0.0:8080->80/tcp"
+				if idx := strings.Index(ports, ":"); idx != -1 {
+					portPart := ports[idx+1:]
+					if dashIdx := strings.Index(portPart, "-"); dashIdx != -1 {
+						port = portPart[:dashIdx]
+					}
+				}
+			}
+
+			projects[project][containerType] = struct {
+				status string
+				port   string
+			}{status: status, port: port}
+		}
+
+		if len(projects) == 0 {
+			ui.PrintInfo("No WordPress environments found")
+			return
+		}
+
+		// Column widths
+		nameWidth := 20
+		wpWidth := 20
+
+		// Print header
+		fmt.Println()
+		fmt.Printf(" %s%s%s%s%s\n",
+			ui.Highlight("NAME"), strings.Repeat(" ", nameWidth-4),
+			ui.Highlight("WORDPRESS"), strings.Repeat(" ", wpWidth-9),
+			ui.Highlight("MYSQL"))
+		fmt.Printf(" \033[38;2;107;114;128m%s\033[0m\n", strings.Repeat("─", nameWidth+wpWidth+15))
+
+		// Print each project
+		for name, containers := range projects {
+			wp := containers["wordpress"]
+			mysql := containers["mysql"]
+
+			var wpStatus string
+			var mysqlStatus string
+			var wpLen int
+			var mysqlLen int
+
+			if wp.status != "" && strings.Contains(wp.status, "Up") {
+				if wp.port != "" {
+					wpStatus = fmt.Sprintf("\033[32mrunning\033[0m \033[97m[%s]\033[0m", wp.port)
+					wpLen = 7 + 3 + len(wp.port) // "running" + " []" + port
+				} else {
+					wpStatus = "\033[32mrunning\033[0m"
+					wpLen = 7
+				}
+			} else {
+				wpStatus = "\033[33mstopped\033[0m"
+				wpLen = 7
+			}
+
+			if mysql.status != "" && strings.Contains(mysql.status, "Up") {
+				if mysql.port != "" {
+					mysqlStatus = fmt.Sprintf("\033[32mrunning\033[0m \033[97m[%s]\033[0m", mysql.port)
+					mysqlLen = 7 + 3 + len(mysql.port)
+				} else {
+					mysqlStatus = "\033[32mrunning\033[0m"
+					mysqlLen = 7
+				}
+			} else {
+				mysqlStatus = "\033[33mstopped\033[0m"
+				mysqlLen = 7
+			}
+
+			// Pad name to fit column
+			namePadding := nameWidth - len(name)
+			if namePadding < 1 {
+				namePadding = 1
+			}
+
+			// Pad wp status to fit column
+			wpPadding := wpWidth - wpLen
+			if wpPadding < 1 {
+				wpPadding = 1
+			}
+
+			_ = mysqlLen
+
+			// Blue for name (same as UI Secondary color #3B82F6)
+			nameColored := fmt.Sprintf("\033[38;2;59;130;246m%s\033[0m", name)
+
+			fmt.Printf(" %s%s%s%s%s\n", nameColored, strings.Repeat(" ", namePadding), wpStatus, strings.Repeat(" ", wpPadding), mysqlStatus)
+		}
+		fmt.Println()
+	},
+}
+
 var deleteCmd = &cobra.Command{
 	Use:   "delete [name]",
 	Short: "Delete WordPress environment and all data",
@@ -414,6 +556,7 @@ func init() {
 	startCmd.Flags().BoolP("quiet", "q", false, "Suppress header output")
 	wordpressCmd.AddCommand(startCmd)
 	wordpressCmd.AddCommand(stopCmd)
+	wordpressCmd.AddCommand(psCmd)
 	wordpressCmd.AddCommand(browseCmd)
 	wordpressCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(wordpressCmd)
@@ -516,6 +659,8 @@ func startContainers(pluginSlug, projectDir string, wpPort, mysqlPort int, docke
 		"-e", "MYSQL_PASSWORD=wordpress",
 		"-e", "MYSQL_ROOT_PASSWORD=rootpassword",
 		"-v", pluginSlug+"-db:/var/lib/mysql",
+		"--label", "wordsmith.type=mysql",
+		"--label", "wordsmith.project="+pluginSlug,
 		"mysql:8.0",
 	)
 	if err := mysqlCmd.Run(); err != nil {
@@ -531,6 +676,8 @@ func startContainers(pluginSlug, projectDir string, wpPort, mysqlPort int, docke
 		"-e", "WORDPRESS_DB_PASSWORD=wordpress",
 		"-e", "WORDPRESS_DB_NAME=wordpress",
 		"-v", pluginSlug+"-wp:/var/www/html",
+		"--label", "wordsmith.type=wordpress",
+		"--label", "wordsmith.project="+pluginSlug,
 		dockerImage,
 	)
 	_ = projectDir
