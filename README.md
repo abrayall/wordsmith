@@ -163,6 +163,11 @@ plugins:
     uri: https://example.com/plugin.zip   # install from URL
   - slug: local-plugin
     uri: /path/to/plugin.zip          # install from local file
+  - https://github.com/owner/repo     # GitHub repo URL (latest release)
+  - https://github.com/owner/repo/releases  # also works with /releases
+  - slug: github-plugin
+    uri: https://github.com/owner/repo
+    version: 1.2.0                    # specific version from GitHub releases
   - my-local-plugin                   # auto-resolves from plugins/my-local-plugin/
   - ../../sibling-project             # relative path to another project
   - slug: inactive-plugin
@@ -176,6 +181,7 @@ themes:
     active: true
   - slug: custom-theme
     uri: https://example.com/theme.zip
+  - https://github.com/owner/theme-repo   # GitHub repo URL (latest release)
   - my-local-theme                    # auto-resolves from themes/my-local-theme/
   - ../../sibling-theme               # relative path to another project
 ```
@@ -203,6 +209,21 @@ When you specify a plugin or theme by slug (e.g., `my-plugin`), Wordsmith checks
 7. WordPress.org repository (fallback)
 
 **Relative paths** (e.g., `../../other-project`) are resolved from the directory containing `wordpress.properties` and follow the same resolution logic.
+
+#### GitHub Releases
+
+When you specify a GitHub repository URL (e.g., `https://github.com/owner/repo`), Wordsmith automatically resolves it to the appropriate release asset:
+
+- **With version**: Downloads from `https://github.com/owner/repo/releases/tag/v{version}/{slug}-{version}.zip`
+- **Without version**: Downloads the latest release
+
+The release asset is matched by looking for:
+1. `{slug}-{version}.zip` (exact match)
+2. `{slug}.zip`
+3. `plugin.zip` or `theme.zip`
+4. Any `.zip` file in the release
+
+If no releases exist, an error is displayed and installation is skipped.
 
 ### plugin.properties
 

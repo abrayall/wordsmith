@@ -773,3 +773,79 @@ func TestFileExistsAndIsFile(t *testing.T) {
 		t.Error("fileExistsAndIsFile should return false for directory")
 	}
 }
+
+func TestExtractSlugFromURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		uri      string
+		expected string
+	}{
+		{
+			name:     "GitHub repo URL",
+			uri:      "https://github.com/owner/my-plugin",
+			expected: "my-plugin",
+		},
+		{
+			name:     "GitHub repo URL with trailing slash",
+			uri:      "https://github.com/owner/my-plugin/",
+			expected: "my-plugin",
+		},
+		{
+			name:     "GitHub repo URL with /releases",
+			uri:      "https://github.com/owner/my-plugin/releases",
+			expected: "my-plugin",
+		},
+		{
+			name:     "GitHub repo URL with /releases/",
+			uri:      "https://github.com/owner/my-plugin/releases/",
+			expected: "my-plugin",
+		},
+		{
+			name:     "Direct zip URL",
+			uri:      "https://example.com/downloads/my-plugin.zip",
+			expected: "my-plugin",
+		},
+		{
+			name:     "Simple URL",
+			uri:      "https://example.com/my-plugin",
+			expected: "my-plugin",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractSlugFromURL(tt.uri)
+			if result != tt.expected {
+				t.Errorf("extractSlugFromURL(%q) = %q, want %q", tt.uri, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParsePluginItemWithURL(t *testing.T) {
+	// Test that a URL string is parsed correctly
+	plugin := parsePluginItem("https://github.com/owner/my-plugin")
+	if plugin.Slug != "my-plugin" {
+		t.Errorf("Expected slug 'my-plugin', got %q", plugin.Slug)
+	}
+	if plugin.URI != "https://github.com/owner/my-plugin" {
+		t.Errorf("Expected URI to be set, got %q", plugin.URI)
+	}
+	if !plugin.Active {
+		t.Error("Expected plugin to be active by default")
+	}
+}
+
+func TestParseThemeItemWithURL(t *testing.T) {
+	// Test that a URL string is parsed correctly
+	theme := parseThemeItem("https://github.com/owner/my-theme/releases", true)
+	if theme.Slug != "my-theme" {
+		t.Errorf("Expected slug 'my-theme', got %q", theme.Slug)
+	}
+	if theme.URI != "https://github.com/owner/my-theme/releases" {
+		t.Errorf("Expected URI to be set, got %q", theme.URI)
+	}
+	if !theme.Active {
+		t.Error("Expected theme to be active (first theme)")
+	}
+}

@@ -839,6 +839,19 @@ func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig
 		// For built plugins, this comes from the plugin.properties name field
 		wpSlug := plugin.Slug
 
+		// Resolve GitHub repository URLs to release asset URLs
+		if resolution.ZipPath != "" && strings.Contains(resolution.ZipPath, "github.com") {
+			resolvedURL, err := config.ResolveGitHubURL(resolution.ZipPath, plugin.Slug, plugin.Version)
+			if err != nil {
+				ui.PrintError("  Failed to resolve GitHub release for '%s': %v", plugin.Slug, err)
+				continue
+			}
+			if resolvedURL != resolution.ZipPath {
+				ui.PrintInfo("  Resolved GitHub release: %s", resolvedURL)
+			}
+			resolution.ZipPath = resolvedURL
+		}
+
 		if resolution.NeedsBuild {
 			// Build the plugin first
 			ui.PrintInfo("  Building plugin '%s'...", plugin.Slug)
@@ -991,6 +1004,19 @@ func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig
 		// wpSlug is the actual WordPress theme slug (directory name) used for activation
 		// For built themes, this comes from the theme.properties name field
 		wpSlug := theme.Slug
+
+		// Resolve GitHub repository URLs to release asset URLs
+		if resolution.ZipPath != "" && strings.Contains(resolution.ZipPath, "github.com") {
+			resolvedURL, err := config.ResolveGitHubURL(resolution.ZipPath, theme.Slug, theme.Version)
+			if err != nil {
+				ui.PrintError("  Failed to resolve GitHub release for '%s': %v", theme.Slug, err)
+				continue
+			}
+			if resolvedURL != resolution.ZipPath {
+				ui.PrintInfo("  Resolved GitHub release: %s", resolvedURL)
+			}
+			resolution.ZipPath = resolvedURL
+		}
 
 		if resolution.NeedsBuild {
 			// Build the theme first

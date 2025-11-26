@@ -103,6 +103,12 @@ func parsePluginsList(val interface{}) []WordPressPlugin {
 func parsePluginItem(item interface{}) WordPressPlugin {
 	switch v := item.(type) {
 	case string:
+		// Check if it's a URL
+		if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
+			// Extract slug from URL (last path component without extension)
+			slug := extractSlugFromURL(v)
+			return WordPressPlugin{Slug: slug, URI: v, Active: true}
+		}
 		// Simple slug
 		return WordPressPlugin{Slug: v, Active: true}
 	case Properties:
@@ -177,6 +183,12 @@ func parseThemesList(val interface{}) []WordPressTheme {
 func parseThemeItem(item interface{}, isFirst bool) WordPressTheme {
 	switch v := item.(type) {
 	case string:
+		// Check if it's a URL
+		if strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") {
+			// Extract slug from URL (last path component without extension)
+			slug := extractSlugFromURL(v)
+			return WordPressTheme{Slug: slug, URI: v, Active: isFirst}
+		}
 		// Simple slug - first theme defaults to active
 		return WordPressTheme{Slug: v, Active: isFirst}
 	case Properties:
@@ -229,6 +241,27 @@ func parseThemeItem(item interface{}, isFirst bool) WordPressTheme {
 // WordPressExists checks if wordpress.properties exists in the directory
 func WordPressExists(dir string) bool {
 	return PropertiesFileExists(dir, "wordpress.properties")
+}
+
+// extractSlugFromURL extracts a slug from a URL
+// For GitHub URLs like https://github.com/owner/repo or https://github.com/owner/repo/releases
+// it returns "repo". For other URLs, it returns the last path component.
+func extractSlugFromURL(uri string) string {
+	// Remove trailing slash
+	uri = strings.TrimSuffix(uri, "/")
+
+	// Remove /releases suffix if present
+	uri = strings.TrimSuffix(uri, "/releases")
+
+	// Get last path component
+	parts := strings.Split(uri, "/")
+	if len(parts) > 0 {
+		slug := parts[len(parts)-1]
+		// Remove .zip extension if present
+		slug = strings.TrimSuffix(slug, ".zip")
+		return slug
+	}
+	return ""
 }
 
 // PluginResolution represents the result of resolving a plugin slug
