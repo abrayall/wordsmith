@@ -87,7 +87,7 @@ func (b *Builder) Build() error {
 
 	sourceWorkDir := filepath.Join(b.WorkDir, "source")
 	stageDir := filepath.Join(b.WorkDir, "stage")
-	pluginName := b.sanitizeName(b.Config.Name)
+	pluginName := b.GetPluginSlug()
 
 	if err := os.MkdirAll(sourceWorkDir, 0755); err != nil {
 		return fmt.Errorf("failed to create source directory: %w", err)
@@ -243,6 +243,20 @@ func (b *Builder) sanitizeName(name string) string {
 	re := regexp.MustCompile(`[^a-z0-9-]`)
 	result = re.ReplaceAllString(result, "")
 	return result
+}
+
+// GetPluginSlug returns the WordPress plugin slug (directory name) for this plugin.
+// If slug is explicitly set in plugin.properties, it is used as-is.
+// Otherwise, the slug is derived from the sanitized name.
+// Must be called after Build() as it requires Config to be loaded.
+func (b *Builder) GetPluginSlug() string {
+	if b.Config == nil {
+		return ""
+	}
+	if b.Config.Slug != "" {
+		return b.Config.Slug
+	}
+	return b.sanitizeName(b.Config.Name)
 }
 
 func (b *Builder) copyFile(src, dst string) error {

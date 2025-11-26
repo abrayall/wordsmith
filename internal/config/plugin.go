@@ -8,6 +8,7 @@ import (
 // PluginConfig represents the plugin.properties configuration
 type PluginConfig struct {
 	Name        string
+	Slug        string
 	Version     string
 	Description string
 	Author      string
@@ -44,6 +45,7 @@ func LoadPluginProperties(dir string) (*PluginConfig, error) {
 
 	config := &PluginConfig{
 		Name:        props.Get("name"),
+		Slug:        props.Get("slug"),
 		Version:     props.Get("version"),
 		Description: props.Get("description"),
 		Author:      props.Get("author"),

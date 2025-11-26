@@ -156,29 +156,59 @@ image: wordpress:6.4-php8.2
 
 # Plugins to install (active: true is default)
 plugins:
-  - akismet                           # simple slug from WordPress.org
+  - akismet                           # simple slug from WordPress.org (latest)
   - slug: woocommerce
-    version: 8.0.0                    # specific version
-    active: true
+    version: 8.0.0                    # specific version from WordPress.org
   - slug: custom-plugin
     uri: https://example.com/plugin.zip   # install from URL
   - slug: local-plugin
     uri: /path/to/plugin.zip          # install from local file
+  - my-local-plugin                   # auto-resolves from plugins/my-local-plugin/
+  - ../../sibling-project             # relative path to another project
+  - slug: inactive-plugin
+    active: false                     # install but don't activate
 
 # Themes to install (first theme defaults to active)
 themes:
-  - twentytwentyfour
+  - twentytwentyfour                  # simple slug from WordPress.org (latest)
   - slug: astra
-    version: 4.0.0
+    version: 4.0.0                    # specific version
     active: true
   - slug: custom-theme
     uri: https://example.com/theme.zip
+  - my-local-theme                    # auto-resolves from themes/my-local-theme/
+  - ../../sibling-theme               # relative path to another project
 ```
+
+#### Plugin/Theme Resolution
+
+When you specify a plugin or theme by slug (e.g., `my-plugin`), Wordsmith checks for local sources before falling back to WordPress.org:
+
+**For plugins:**
+1. `plugins/my-plugin/plugin.zip` - Pre-built zip file
+2. `plugins/my-plugin.zip` - Zip file in plugins directory
+3. `my-plugin/plugin.zip` - Zip file in slug directory
+4. `my-plugin.zip` - Zip file at root level
+5. `plugins/my-plugin/plugin.properties` - Build from source
+6. `my-plugin/plugin.properties` - Build from source
+7. WordPress.org repository (fallback)
+
+**For themes:**
+1. `themes/my-theme/theme.zip` - Pre-built zip file
+2. `themes/my-theme.zip` - Zip file in themes directory
+3. `my-theme/theme.zip` - Zip file in slug directory
+4. `my-theme.zip` - Zip file at root level
+5. `themes/my-theme/theme.properties` - Build from source
+6. `my-theme/theme.properties` - Build from source
+7. WordPress.org repository (fallback)
+
+**Relative paths** (e.g., `../../other-project`) are resolved from the directory containing `wordpress.properties` and follow the same resolution logic.
 
 ### plugin.properties
 
 ```properties
 name=My Plugin
+slug=my-plugin
 description=A WordPress plugin
 author=Your Name
 author-uri=https://example.com
@@ -196,10 +226,13 @@ text-domain=my-plugin
 domain-path=/languages
 ```
 
+The `slug` field is optional. If not specified, it's derived from the `name` field (lowercased, spaces replaced with dashes, special characters removed).
+
 ### theme.properties
 
 ```properties
 name=My Theme
+slug=my-theme
 description=A WordPress theme
 author=Your Name
 author-uri=https://example.com
@@ -216,6 +249,8 @@ exclude=node_modules,build,.*
 text-domain=my-theme
 tags=custom-logo,custom-menu,editor-style
 ```
+
+The `slug` field is optional. If not specified, it's derived from the `name` field.
 
 ### Child Theme Configuration
 

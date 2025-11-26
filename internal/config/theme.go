@@ -8,6 +8,7 @@ import (
 // ThemeConfig represents the theme.properties configuration
 type ThemeConfig struct {
 	Name        string
+	Slug        string
 	Version     string
 	Description string
 	Author      string
@@ -44,6 +45,7 @@ func LoadThemeProperties(dir string) (*ThemeConfig, error) {
 
 	config := &ThemeConfig{
 		Name:        props.Get("name"),
+		Slug:        props.Get("slug"),
 		Version:     props.Get("version"),
 		Description: props.Get("description"),
 		Author:      props.Get("author"),

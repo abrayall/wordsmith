@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"wordsmith/internal/builder"
 	"wordsmith/internal/config"
 	"wordsmith/internal/ui"
 )
@@ -226,14 +227,15 @@ var startCmd = &cobra.Command{
 
 		// Install plugins and themes from wordpress.properties
 		if wpConfig != nil {
+			baseDir := filepath.Dir(propsFile)
 			if len(wpConfig.Plugins) > 0 {
 				fmt.Println()
 				ui.PrintInfo("Installing plugins...")
-				installPluginsAndThemes(pluginSlug, wpConfig)
+				installPluginsAndThemes(pluginSlug, wpConfig, baseDir)
 			} else if len(wpConfig.Themes) > 0 {
 				fmt.Println()
 				ui.PrintInfo("Installing themes...")
-				installPluginsAndThemes(pluginSlug, wpConfig)
+				installPluginsAndThemes(pluginSlug, wpConfig, baseDir)
 			}
 		}
 
@@ -279,30 +281,41 @@ var stopCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			isTheme := config.ThemeExists(dir)
-			isPlugin := config.PluginExists(dir)
+			var name string
 
-			if !isTheme && !isPlugin {
-				ui.PrintError("No plugin.properties or theme.properties found in current directory")
-				ui.PrintInfo("Specify instance name: wordsmith wordpress stop <name>")
-				os.Exit(1)
+			// Check for wordpress.properties first, then plugin/theme
+			if config.WordPressExists(dir) {
+				wpConfig, err := config.LoadWordPressProperties(dir)
+				if err != nil {
+					ui.PrintError("Failed to load wordpress.properties: %v", err)
+					os.Exit(1)
+				}
+				name = wpConfig.Name
 			}
 
-			var name string
-			if isTheme {
-				cfg, err := config.LoadThemeProperties(dir)
-				if err != nil {
-					ui.PrintError("Failed to load theme.properties: %v", err)
-					os.Exit(1)
+			// If no name from wordpress.properties, try plugin/theme
+			if name == "" {
+				if config.PluginExists(dir) {
+					cfg, err := config.LoadPluginProperties(dir)
+					if err != nil {
+						ui.PrintError("Failed to load plugin.properties: %v", err)
+						os.Exit(1)
+					}
+					name = cfg.Name
+				} else if config.ThemeExists(dir) {
+					cfg, err := config.LoadThemeProperties(dir)
+					if err != nil {
+						ui.PrintError("Failed to load theme.properties: %v", err)
+						os.Exit(1)
+					}
+					name = cfg.Name
 				}
-				name = cfg.Name
-			} else {
-				cfg, err := config.LoadPluginProperties(dir)
-				if err != nil {
-					ui.PrintError("Failed to load plugin.properties: %v", err)
-					os.Exit(1)
-				}
-				name = cfg.Name
+			}
+
+			if name == "" {
+				ui.PrintError("No wordpress.properties, plugin.properties, or theme.properties found in current directory")
+				ui.PrintInfo("Specify instance name: wordsmith wordpress stop <name>")
+				os.Exit(1)
 			}
 
 			pluginSlug = sanitizePluginName(name)
@@ -506,30 +519,41 @@ var deleteCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			isTheme := config.ThemeExists(dir)
-			isPlugin := config.PluginExists(dir)
+			var name string
 
-			if !isTheme && !isPlugin {
-				ui.PrintError("No plugin.properties or theme.properties found in current directory")
-				ui.PrintInfo("Specify instance name: wordsmith wordpress delete <name>")
-				os.Exit(1)
+			// Check for wordpress.properties first, then plugin/theme
+			if config.WordPressExists(dir) {
+				wpConfig, err := config.LoadWordPressProperties(dir)
+				if err != nil {
+					ui.PrintError("Failed to load wordpress.properties: %v", err)
+					os.Exit(1)
+				}
+				name = wpConfig.Name
 			}
 
-			var name string
-			if isTheme {
-				cfg, err := config.LoadThemeProperties(dir)
-				if err != nil {
-					ui.PrintError("Failed to load theme.properties: %v", err)
-					os.Exit(1)
+			// If no name from wordpress.properties, try plugin/theme
+			if name == "" {
+				if config.PluginExists(dir) {
+					cfg, err := config.LoadPluginProperties(dir)
+					if err != nil {
+						ui.PrintError("Failed to load plugin.properties: %v", err)
+						os.Exit(1)
+					}
+					name = cfg.Name
+				} else if config.ThemeExists(dir) {
+					cfg, err := config.LoadThemeProperties(dir)
+					if err != nil {
+						ui.PrintError("Failed to load theme.properties: %v", err)
+						os.Exit(1)
+					}
+					name = cfg.Name
 				}
-				name = cfg.Name
-			} else {
-				cfg, err := config.LoadPluginProperties(dir)
-				if err != nil {
-					ui.PrintError("Failed to load plugin.properties: %v", err)
-					os.Exit(1)
-				}
-				name = cfg.Name
+			}
+
+			if name == "" {
+				ui.PrintError("No wordpress.properties, plugin.properties, or theme.properties found in current directory")
+				ui.PrintInfo("Specify instance name: wordsmith wordpress delete <name>")
+				os.Exit(1)
 			}
 
 			pluginSlug = sanitizePluginName(name)
@@ -800,18 +824,95 @@ func installWordPress(pluginSlug string, port int, pluginName string) error {
 }
 
 // installPluginsAndThemes installs plugins and themes from wordpress.properties
-func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig) {
+// baseDir is the directory containing wordpress.properties (used for resolving relative paths)
+func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig, baseDir string) {
 	networkName := pluginSlug + "-network"
 	mysqlContainer := pluginSlug + "-mysql"
 
 	// Install plugins
 	for _, plugin := range wpConfig.Plugins {
-		var installCmd *exec.Cmd
+		// Resolve the plugin URI to determine how to install
+		resolution := config.ResolvePluginURI(baseDir, plugin)
 
-		if plugin.URI != "" {
-			// Install from URI (URL or file path)
-			if strings.HasPrefix(plugin.URI, "http://") || strings.HasPrefix(plugin.URI, "https://") {
-				// Install from URL
+		var installCmd *exec.Cmd
+		// wpSlug is the actual WordPress plugin slug (directory name) used for activation
+		// For built plugins, this comes from the plugin.properties name field
+		wpSlug := plugin.Slug
+
+		if resolution.NeedsBuild {
+			// Build the plugin first
+			ui.PrintInfo("  Building plugin '%s'...", plugin.Slug)
+			b := builder.New(resolution.BuildDir)
+			b.Quiet = true
+			if err := b.Build(); err != nil {
+				ui.PrintWarning("  Failed to build plugin '%s': %v", plugin.Slug, err)
+				continue
+			}
+
+			// Get the actual WordPress slug from the built plugin's properties
+			// This is the sanitized name that WordPress will use as the plugin directory
+			wpSlug = b.GetPluginSlug()
+
+			// Find the built zip file
+			buildDir := filepath.Join(resolution.BuildDir, "build")
+			entries, err := os.ReadDir(buildDir)
+			if err != nil {
+				ui.PrintWarning("  Failed to read build directory for '%s': %v", plugin.Slug, err)
+				continue
+			}
+
+			var zipFile string
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), ".zip") {
+					zipFile = filepath.Join(buildDir, entry.Name())
+					break
+				}
+			}
+
+			if zipFile == "" {
+				ui.PrintWarning("  No zip file found after building plugin '%s'", plugin.Slug)
+				continue
+			}
+
+			resolution.ZipPath = zipFile
+			resolution.IsLocal = true
+			ui.PrintInfo("  Installing plugin '%s' from build...", plugin.Slug)
+		}
+
+		if resolution.IsLocal && resolution.ZipPath != "" {
+			// Install from local file
+			if !strings.HasPrefix(resolution.ZipPath, "http://") && !strings.HasPrefix(resolution.ZipPath, "https://") {
+				if !resolution.NeedsBuild {
+					ui.PrintInfo("  Installing plugin '%s' from file...", plugin.Slug)
+				}
+
+				// Get absolute path to the zip file
+				absZipPath, err := filepath.Abs(resolution.ZipPath)
+				if err != nil {
+					ui.PrintWarning("  Failed to get absolute path for plugin '%s': %v", plugin.Slug, err)
+					continue
+				}
+
+				// Mount the directory containing the zip and reference it inside the container
+				zipDir := filepath.Dir(absZipPath)
+				zipFilename := filepath.Base(absZipPath)
+				containerMountPath := "/mnt/plugin"
+				containerZipPath := containerMountPath + "/" + zipFilename
+
+				installCmd = exec.Command("docker", "run", "--rm",
+					"--network", networkName,
+					"--user", "33:33",
+					"-v", pluginSlug+"-wp:/var/www/html",
+					"-v", zipDir+":"+containerMountPath+":ro",
+					"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+					"-e", "WORDPRESS_DB_USER=wordpress",
+					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+					"-e", "WORDPRESS_DB_NAME=wordpress",
+					"wordpress:cli",
+					"wp", "plugin", "install", containerZipPath,
+				)
+			} else {
+				// URL
 				ui.PrintInfo("  Installing plugin '%s' from URL...", plugin.Slug)
 				installCmd = exec.Command("docker", "run", "--rm",
 					"--network", networkName,
@@ -822,32 +923,23 @@ func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig
 					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
 					"-e", "WORDPRESS_DB_NAME=wordpress",
 					"wordpress:cli",
-					"wp", "plugin", "install", plugin.URI,
-				)
-			} else {
-				// Install from local file path - copy to container first
-				ui.PrintInfo("  Installing plugin '%s' from file...", plugin.Slug)
-				containerPath := fmt.Sprintf("/tmp/%s.zip", plugin.Slug)
-
-				// Copy file to container
-				copyCmd := exec.Command("docker", "cp", plugin.URI, pluginSlug+"-wordpress:"+containerPath)
-				if err := copyCmd.Run(); err != nil {
-					ui.PrintWarning("  Failed to copy plugin file: %v", err)
-					continue
-				}
-
-				installCmd = exec.Command("docker", "run", "--rm",
-					"--network", networkName,
-					"--user", "33:33",
-					"-v", pluginSlug+"-wp:/var/www/html",
-					"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
-					"-e", "WORDPRESS_DB_USER=wordpress",
-					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
-					"-e", "WORDPRESS_DB_NAME=wordpress",
-					"wordpress:cli",
-					"wp", "plugin", "install", containerPath,
+					"wp", "plugin", "install", resolution.ZipPath,
 				)
 			}
+		} else if resolution.ZipPath != "" && (strings.HasPrefix(resolution.ZipPath, "http://") || strings.HasPrefix(resolution.ZipPath, "https://")) {
+			// Install from URL
+			ui.PrintInfo("  Installing plugin '%s' from URL...", plugin.Slug)
+			installCmd = exec.Command("docker", "run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", pluginSlug+"-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "plugin", "install", resolution.ZipPath,
+			)
 		} else {
 			// Install from WordPress.org
 			ui.PrintInfo("  Installing plugin '%s'...", plugin.Slug)
@@ -884,7 +976,7 @@ func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig
 				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
 				"-e", "WORDPRESS_DB_NAME=wordpress",
 				"wordpress:cli",
-				"wp", "plugin", "activate", plugin.Slug,
+				"wp", "plugin", "activate", wpSlug,
 			)
 			activateCmd.Run()
 		}
@@ -892,12 +984,88 @@ func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig
 
 	// Install themes
 	for _, theme := range wpConfig.Themes {
-		var installCmd *exec.Cmd
+		// Resolve the theme URI to determine how to install
+		resolution := config.ResolveThemeURI(baseDir, theme)
 
-		if theme.URI != "" {
-			// Install from URI (URL or file path)
-			if strings.HasPrefix(theme.URI, "http://") || strings.HasPrefix(theme.URI, "https://") {
-				// Install from URL
+		var installCmd *exec.Cmd
+		// wpSlug is the actual WordPress theme slug (directory name) used for activation
+		// For built themes, this comes from the theme.properties name field
+		wpSlug := theme.Slug
+
+		if resolution.NeedsBuild {
+			// Build the theme first
+			ui.PrintInfo("  Building theme '%s'...", theme.Slug)
+			b := builder.NewThemeBuilder(resolution.BuildDir)
+			b.Quiet = true
+			if err := b.Build(); err != nil {
+				ui.PrintWarning("  Failed to build theme '%s': %v", theme.Slug, err)
+				continue
+			}
+
+			// Get the actual WordPress slug from the built theme's properties
+			// This is the sanitized name that WordPress will use as the theme directory
+			wpSlug = b.GetThemeSlug()
+
+			// Find the built zip file
+			buildDir := filepath.Join(resolution.BuildDir, "build")
+			entries, err := os.ReadDir(buildDir)
+			if err != nil {
+				ui.PrintWarning("  Failed to read build directory for '%s': %v", theme.Slug, err)
+				continue
+			}
+
+			var zipFile string
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), ".zip") {
+					zipFile = filepath.Join(buildDir, entry.Name())
+					break
+				}
+			}
+
+			if zipFile == "" {
+				ui.PrintWarning("  No zip file found after building theme '%s'", theme.Slug)
+				continue
+			}
+
+			resolution.ZipPath = zipFile
+			resolution.IsLocal = true
+			ui.PrintInfo("  Installing theme '%s' from build...", theme.Slug)
+		}
+
+		if resolution.IsLocal && resolution.ZipPath != "" {
+			// Install from local file
+			if !strings.HasPrefix(resolution.ZipPath, "http://") && !strings.HasPrefix(resolution.ZipPath, "https://") {
+				if !resolution.NeedsBuild {
+					ui.PrintInfo("  Installing theme '%s' from file...", theme.Slug)
+				}
+
+				// Get absolute path to the zip file
+				absZipPath, err := filepath.Abs(resolution.ZipPath)
+				if err != nil {
+					ui.PrintWarning("  Failed to get absolute path for theme '%s': %v", theme.Slug, err)
+					continue
+				}
+
+				// Mount the directory containing the zip and reference it inside the container
+				zipDir := filepath.Dir(absZipPath)
+				zipFilename := filepath.Base(absZipPath)
+				containerMountPath := "/mnt/theme"
+				containerZipPath := containerMountPath + "/" + zipFilename
+
+				installCmd = exec.Command("docker", "run", "--rm",
+					"--network", networkName,
+					"--user", "33:33",
+					"-v", pluginSlug+"-wp:/var/www/html",
+					"-v", zipDir+":"+containerMountPath+":ro",
+					"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+					"-e", "WORDPRESS_DB_USER=wordpress",
+					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+					"-e", "WORDPRESS_DB_NAME=wordpress",
+					"wordpress:cli",
+					"wp", "theme", "install", containerZipPath,
+				)
+			} else {
+				// URL
 				ui.PrintInfo("  Installing theme '%s' from URL...", theme.Slug)
 				installCmd = exec.Command("docker", "run", "--rm",
 					"--network", networkName,
@@ -908,30 +1076,7 @@ func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig
 					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
 					"-e", "WORDPRESS_DB_NAME=wordpress",
 					"wordpress:cli",
-					"wp", "theme", "install", theme.URI,
-				)
-			} else {
-				// Install from local file path
-				ui.PrintInfo("  Installing theme '%s' from file...", theme.Slug)
-				containerPath := fmt.Sprintf("/tmp/%s.zip", theme.Slug)
-
-				// Copy file to container
-				copyCmd := exec.Command("docker", "cp", theme.URI, pluginSlug+"-wordpress:"+containerPath)
-				if err := copyCmd.Run(); err != nil {
-					ui.PrintWarning("  Failed to copy theme file: %v", err)
-					continue
-				}
-
-				installCmd = exec.Command("docker", "run", "--rm",
-					"--network", networkName,
-					"--user", "33:33",
-					"-v", pluginSlug+"-wp:/var/www/html",
-					"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
-					"-e", "WORDPRESS_DB_USER=wordpress",
-					"-e", "WORDPRESS_DB_PASSWORD=wordpress",
-					"-e", "WORDPRESS_DB_NAME=wordpress",
-					"wordpress:cli",
-					"wp", "theme", "install", containerPath,
+					"wp", "theme", "install", resolution.ZipPath,
 				)
 			}
 		} else {
@@ -970,7 +1115,7 @@ func installPluginsAndThemes(pluginSlug string, wpConfig *config.WordPressConfig
 				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
 				"-e", "WORDPRESS_DB_NAME=wordpress",
 				"wordpress:cli",
-				"wp", "theme", "activate", theme.Slug,
+				"wp", "theme", "activate", wpSlug,
 			)
 			activateCmd.Run()
 		}

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 )
 
 // WordPressPlugin represents a plugin to install
@@ -227,4 +229,210 @@ func parseThemeItem(item interface{}, isFirst bool) WordPressTheme {
 // WordPressExists checks if wordpress.properties exists in the directory
 func WordPressExists(dir string) bool {
 	return PropertiesFileExists(dir, "wordpress.properties")
+}
+
+// PluginResolution represents the result of resolving a plugin slug
+type PluginResolution struct {
+	Slug       string // Original slug
+	ZipPath    string // Path to zip file (if exists or will be built)
+	BuildDir   string // Directory containing plugin.properties (if needs build)
+	NeedsBuild bool   // True if plugin.properties exists but no zip
+	IsLocal    bool   // True if this is a local plugin (not from wordpress.org)
+}
+
+// ThemeResolution represents the result of resolving a theme slug
+type ThemeResolution struct {
+	Slug       string // Original slug
+	ZipPath    string // Path to zip file (if exists or will be built)
+	BuildDir   string // Directory containing theme.properties (if needs build)
+	NeedsBuild bool   // True if theme.properties exists but no zip
+	IsLocal    bool   // True if this is a local theme (not from wordpress.org)
+}
+
+// ResolvePluginURI resolves a plugin slug or URI to determine how to install it.
+// It checks in this order:
+// 1. If URI is an HTTP URL or absolute file path, use as-is
+// 2. Check plugins/<slug>/plugin.zip
+// 3. Check plugins/<slug>.zip
+// 4. Check <slug>/plugin.zip (relative path)
+// 5. Check <slug>.zip (relative path)
+// 6. Check plugins/<slug>/plugin.properties (needs build)
+// 7. Check <slug>/plugin.properties (needs build)
+// 8. Otherwise, treat as WordPress.org slug
+func ResolvePluginURI(baseDir string, plugin WordPressPlugin) PluginResolution {
+	result := PluginResolution{Slug: plugin.Slug}
+
+	// If URI is already set, check if it's a URL or absolute path
+	if plugin.URI != "" {
+		if strings.HasPrefix(plugin.URI, "http://") || strings.HasPrefix(plugin.URI, "https://") {
+			result.ZipPath = plugin.URI
+			result.IsLocal = false
+			return result
+		}
+		// Treat as file path - could be absolute or relative
+		if filepath.IsAbs(plugin.URI) {
+			result.ZipPath = plugin.URI
+			result.IsLocal = true
+			return result
+		}
+		// Relative path - resolve from baseDir
+		result.ZipPath = filepath.Join(baseDir, plugin.URI)
+		result.IsLocal = true
+		return result
+	}
+
+	slug := plugin.Slug
+
+	// Check plugins/<slug>/plugin.zip
+	zipPath := filepath.Join(baseDir, "plugins", slug, "plugin.zip")
+	if fileExistsAndIsFile(zipPath) {
+		result.ZipPath = zipPath
+		result.IsLocal = true
+		return result
+	}
+
+	// Check plugins/<slug>.zip
+	zipPath = filepath.Join(baseDir, "plugins", slug+".zip")
+	if fileExistsAndIsFile(zipPath) {
+		result.ZipPath = zipPath
+		result.IsLocal = true
+		return result
+	}
+
+	// Check <slug>/plugin.zip (for relative directory reference)
+	zipPath = filepath.Join(baseDir, slug, "plugin.zip")
+	if fileExistsAndIsFile(zipPath) {
+		result.ZipPath = zipPath
+		result.IsLocal = true
+		return result
+	}
+
+	// Check <slug>.zip (for relative file reference)
+	zipPath = filepath.Join(baseDir, slug+".zip")
+	if fileExistsAndIsFile(zipPath) {
+		result.ZipPath = zipPath
+		result.IsLocal = true
+		return result
+	}
+
+	// Check plugins/<slug>/plugin.properties (needs build)
+	propsDir := filepath.Join(baseDir, "plugins", slug)
+	if PluginExists(propsDir) {
+		result.BuildDir = propsDir
+		result.NeedsBuild = true
+		result.IsLocal = true
+		// The zip will be in build/<plugin-name>-<version>.zip after build
+		return result
+	}
+
+	// Check <slug>/plugin.properties (for relative directory reference)
+	propsDir = filepath.Join(baseDir, slug)
+	if PluginExists(propsDir) {
+		result.BuildDir = propsDir
+		result.NeedsBuild = true
+		result.IsLocal = true
+		return result
+	}
+
+	// No local resolution found - treat as WordPress.org slug
+	result.IsLocal = false
+	return result
+}
+
+// ResolveThemeURI resolves a theme slug or URI to determine how to install it.
+// It checks in this order:
+// 1. If URI is an HTTP URL or absolute file path, use as-is
+// 2. Check themes/<slug>/theme.zip
+// 3. Check themes/<slug>.zip
+// 4. Check <slug>/theme.zip (relative path)
+// 5. Check <slug>.zip (relative path)
+// 6. Check themes/<slug>/theme.properties (needs build)
+// 7. Check <slug>/theme.properties (needs build)
+// 8. Otherwise, treat as WordPress.org slug
+func ResolveThemeURI(baseDir string, theme WordPressTheme) ThemeResolution {
+	result := ThemeResolution{Slug: theme.Slug}
+
+	// If URI is already set, check if it's a URL or absolute path
+	if theme.URI != "" {
+		if strings.HasPrefix(theme.URI, "http://") || strings.HasPrefix(theme.URI, "https://") {
+			result.ZipPath = theme.URI
+			result.IsLocal = false
+			return result
+		}
+		// Treat as file path - could be absolute or relative
+		if filepath.IsAbs(theme.URI) {
+			result.ZipPath = theme.URI
+			result.IsLocal = true
+			return result
+		}
+		// Relative path - resolve from baseDir
+		result.ZipPath = filepath.Join(baseDir, theme.URI)
+		result.IsLocal = true
+		return result
+	}
+
+	slug := theme.Slug
+
+	// Check themes/<slug>/theme.zip
+	zipPath := filepath.Join(baseDir, "themes", slug, "theme.zip")
+	if fileExistsAndIsFile(zipPath) {
+		result.ZipPath = zipPath
+		result.IsLocal = true
+		return result
+	}
+
+	// Check themes/<slug>.zip
+	zipPath = filepath.Join(baseDir, "themes", slug+".zip")
+	if fileExistsAndIsFile(zipPath) {
+		result.ZipPath = zipPath
+		result.IsLocal = true
+		return result
+	}
+
+	// Check <slug>/theme.zip (for relative directory reference)
+	zipPath = filepath.Join(baseDir, slug, "theme.zip")
+	if fileExistsAndIsFile(zipPath) {
+		result.ZipPath = zipPath
+		result.IsLocal = true
+		return result
+	}
+
+	// Check <slug>.zip (for relative file reference)
+	zipPath = filepath.Join(baseDir, slug+".zip")
+	if fileExistsAndIsFile(zipPath) {
+		result.ZipPath = zipPath
+		result.IsLocal = true
+		return result
+	}
+
+	// Check themes/<slug>/theme.properties (needs build)
+	propsDir := filepath.Join(baseDir, "themes", slug)
+	if ThemeExists(propsDir) {
+		result.BuildDir = propsDir
+		result.NeedsBuild = true
+		result.IsLocal = true
+		return result
+	}
+
+	// Check <slug>/theme.properties (for relative directory reference)
+	propsDir = filepath.Join(baseDir, slug)
+	if ThemeExists(propsDir) {
+		result.BuildDir = propsDir
+		result.NeedsBuild = true
+		result.IsLocal = true
+		return result
+	}
+
+	// No local resolution found - treat as WordPress.org slug
+	result.IsLocal = false
+	return result
+}
+
+// fileExistsAndIsFile checks if a file exists at the given path and is not a directory
+func fileExistsAndIsFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }

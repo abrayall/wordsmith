@@ -87,7 +87,7 @@ func (b *ThemeBuilder) Build() error {
 	}
 
 	stageDir := filepath.Join(b.WorkDir, "stage")
-	themeName := b.sanitizeName(b.Config.Name)
+	themeName := b.GetThemeSlug()
 
 	if err := os.MkdirAll(stageDir, 0755); err != nil {
 		return fmt.Errorf("failed to create stage directory: %w", err)
@@ -205,6 +205,20 @@ func (b *ThemeBuilder) sanitizeName(name string) string {
 	re := regexp.MustCompile(`[^a-z0-9-]`)
 	result = re.ReplaceAllString(result, "")
 	return result
+}
+
+// GetThemeSlug returns the WordPress theme slug (directory name) for this theme.
+// If slug is explicitly set in theme.properties, it is used as-is.
+// Otherwise, the slug is derived from the sanitized name.
+// Must be called after Build() as it requires Config to be loaded.
+func (b *ThemeBuilder) GetThemeSlug() string {
+	if b.Config == nil {
+		return ""
+	}
+	if b.Config.Slug != "" {
+		return b.Config.Slug
+	}
+	return b.sanitizeName(b.Config.Name)
 }
 
 func (b *ThemeBuilder) copyFile(src, dst string) error {
