@@ -18,24 +18,13 @@ echo Cleaning previous build...
 if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
 mkdir "%BUILD_DIR%"
 
-:: Get version from latest git tag
+:: Get version using vermouth
 echo Reading version from git tags...
-for /f "tokens=*" %%i in ('git describe --tags --match "v*.*.*" 2^>nul') do set "GIT_DESCRIBE=%%i"
-if "%GIT_DESCRIBE%"=="" set "GIT_DESCRIBE=v0.1.0"
-
-:: Parse version (simplified parsing for batch)
-set "VERSION=%GIT_DESCRIBE:~1%"
-
-:: Check for uncommitted changes
-git status --porcelain > nul 2>&1
-for /f %%i in ('git status --porcelain 2^>nul') do (
-    for /f "tokens=1-4 delims=/ " %%a in ('date /t') do set "DATESTAMP=%%c%%a%%b"
-    for /f "tokens=1-2 delims=: " %%a in ('time /t') do set "TIMESTAMP=%%a%%b"
-    set "VERSION=%VERSION%-!DATESTAMP!!TIMESTAMP!"
-    echo Detected uncommitted changes, appending timestamp
-    goto :done_dirty
+for /f "tokens=*" %%i in ('vermouth 2^>nul') do set "VERSION=%%i"
+if not defined VERSION (
+    curl -sfL https://raw.githubusercontent.com/abrayall/vermouth/refs/heads/main/vermouth.bat -o %TEMP%\vermouth.bat
+    for /f "tokens=*" %%i in ('%TEMP%\vermouth.bat') do set "VERSION=%%i"
 )
-:done_dirty
 
 echo Building version: %VERSION%
 echo.

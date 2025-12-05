@@ -10,10 +10,10 @@ var (
 	// Colors
 	Primary   = lipgloss.Color("#7C3AED") // Purple
 	Secondary = lipgloss.Color("#3B82F6") // Blue
-	Success   = lipgloss.Color("#10B981") // Green
+	Success   = lipgloss.Color("#27C93F") // Green
 	Warning   = lipgloss.Color("#F59E0B") // Amber
 	Error     = lipgloss.Color("#EF4444") // Red
-	Muted     = lipgloss.Color("#6B7280") // Gray
+	Muted     = lipgloss.Color("#888888") // Gray
 
 	// Styles
 	TitleStyle = lipgloss.NewStyle().

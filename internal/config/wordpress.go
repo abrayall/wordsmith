@@ -303,13 +303,23 @@ func ResolvePluginURI(baseDir string, plugin WordPressPlugin) PluginResolution {
 			return result
 		}
 		// Treat as file path - could be absolute or relative
+		var resolvedPath string
 		if filepath.IsAbs(plugin.URI) {
-			result.ZipPath = plugin.URI
+			resolvedPath = plugin.URI
+		} else {
+			resolvedPath = filepath.Join(baseDir, plugin.URI)
+		}
+
+		// Check if it's a directory with plugin.properties (needs build)
+		if PluginExists(resolvedPath) {
+			result.BuildDir = resolvedPath
+			result.NeedsBuild = true
 			result.IsLocal = true
 			return result
 		}
-		// Relative path - resolve from baseDir
-		result.ZipPath = filepath.Join(baseDir, plugin.URI)
+
+		// Otherwise treat as zip file path
+		result.ZipPath = resolvedPath
 		result.IsLocal = true
 		return result
 	}
@@ -393,13 +403,23 @@ func ResolveThemeURI(baseDir string, theme WordPressTheme) ThemeResolution {
 			return result
 		}
 		// Treat as file path - could be absolute or relative
+		var resolvedPath string
 		if filepath.IsAbs(theme.URI) {
-			result.ZipPath = theme.URI
+			resolvedPath = theme.URI
+		} else {
+			resolvedPath = filepath.Join(baseDir, theme.URI)
+		}
+
+		// Check if it's a directory with theme.properties (needs build)
+		if ThemeExists(resolvedPath) {
+			result.BuildDir = resolvedPath
+			result.NeedsBuild = true
 			result.IsLocal = true
 			return result
 		}
-		// Relative path - resolve from baseDir
-		result.ZipPath = filepath.Join(baseDir, theme.URI)
+
+		// Otherwise treat as zip file path
+		result.ZipPath = resolvedPath
 		result.IsLocal = true
 		return result
 	}

@@ -54,12 +54,15 @@ var startCmd = &cobra.Command{
 				os.Exit(1)
 			}
 		} else {
-			// Check for wordpress.properties, then plugin/theme
+			// Check for site.properties, wordpress.properties, then plugin/theme
+			siteProps := filepath.Join(dir, "site.properties")
 			wpProps := filepath.Join(dir, "wordpress.properties")
 			pluginProps := filepath.Join(dir, "plugin.properties")
 			themeProps := filepath.Join(dir, "theme.properties")
 
-			if config.FileExists(wpProps) {
+			if config.FileExists(siteProps) {
+				propsFile = siteProps
+			} else if config.FileExists(wpProps) {
 				propsFile = wpProps
 			} else if config.FileExists(pluginProps) {
 				propsFile = pluginProps
@@ -67,7 +70,7 @@ var startCmd = &cobra.Command{
 				propsFile = themeProps
 			} else {
 				ui.PrintError("No properties file found")
-				ui.PrintInfo("Create wordpress.properties, plugin.properties, or theme.properties")
+				ui.PrintInfo("Create site.properties, wordpress.properties, plugin.properties, or theme.properties")
 				os.Exit(1)
 			}
 		}
@@ -78,9 +81,19 @@ var startCmd = &cobra.Command{
 		var envName string
 
 		filename := filepath.Base(propsFile)
+		baseDir := filepath.Dir(propsFile)
 		switch filename {
+		case "site.properties":
+			siteConfig, err := config.LoadSiteProperties(baseDir)
+			if err != nil {
+				ui.PrintError("Failed to load %s: %v", filename, err)
+				os.Exit(1)
+			}
+			wpConfig = siteConfig.ToWordPressConfig()
+			dockerImage = siteConfig.Image
+			envName = siteConfig.Name
 		case "wordpress.properties":
-			wpConfig, err = config.LoadWordPressProperties(filepath.Dir(propsFile))
+			wpConfig, err = config.LoadWordPressProperties(baseDir)
 			if err != nil {
 				ui.PrintError("Failed to load %s: %v", filename, err)
 				os.Exit(1)
@@ -88,14 +101,14 @@ var startCmd = &cobra.Command{
 			dockerImage = wpConfig.Image
 			envName = wpConfig.Name
 		case "plugin.properties":
-			cfg, err := config.LoadPluginProperties(filepath.Dir(propsFile))
+			cfg, err := config.LoadPluginProperties(baseDir)
 			if err != nil {
 				ui.PrintError("Failed to load %s: %v", filename, err)
 				os.Exit(1)
 			}
 			envName = cfg.Name
 		case "theme.properties":
-			cfg, err := config.LoadThemeProperties(filepath.Dir(propsFile))
+			cfg, err := config.LoadThemeProperties(baseDir)
 			if err != nil {
 				ui.PrintError("Failed to load %s: %v", filename, err)
 				os.Exit(1)
@@ -103,7 +116,7 @@ var startCmd = &cobra.Command{
 			envName = cfg.Name
 		default:
 			// Try to parse as wordpress.properties format
-			wpConfig, err = config.LoadWordPressProperties(filepath.Dir(propsFile))
+			wpConfig, err = config.LoadWordPressProperties(baseDir)
 			if err != nil {
 				ui.PrintError("Failed to load %s: %v", propsFile, err)
 				os.Exit(1)
@@ -283,8 +296,15 @@ var stopCmd = &cobra.Command{
 
 			var name string
 
-			// Check for wordpress.properties first, then plugin/theme
-			if config.WordPressExists(dir) {
+			// Check for site.properties, wordpress.properties, then plugin/theme
+			if config.SiteExists(dir) {
+				siteConfig, err := config.LoadSiteProperties(dir)
+				if err != nil {
+					ui.PrintError("Failed to load site.properties: %v", err)
+					os.Exit(1)
+				}
+				name = siteConfig.Name
+			} else if config.WordPressExists(dir) {
 				wpConfig, err := config.LoadWordPressProperties(dir)
 				if err != nil {
 					ui.PrintError("Failed to load wordpress.properties: %v", err)
@@ -293,7 +313,7 @@ var stopCmd = &cobra.Command{
 				name = wpConfig.Name
 			}
 
-			// If no name from wordpress.properties, try plugin/theme
+			// If no name from site/wordpress.properties, try plugin/theme
 			if name == "" {
 				if config.PluginExists(dir) {
 					cfg, err := config.LoadPluginProperties(dir)
@@ -313,7 +333,7 @@ var stopCmd = &cobra.Command{
 			}
 
 			if name == "" {
-				ui.PrintError("No wordpress.properties, plugin.properties, or theme.properties found in current directory")
+				ui.PrintError("No site.properties, wordpress.properties, plugin.properties, or theme.properties found in current directory")
 				ui.PrintInfo("Specify instance name: wordsmith wordpress stop <name>")
 				os.Exit(1)
 			}
@@ -521,8 +541,15 @@ var deleteCmd = &cobra.Command{
 
 			var name string
 
-			// Check for wordpress.properties first, then plugin/theme
-			if config.WordPressExists(dir) {
+			// Check for site.properties, wordpress.properties, then plugin/theme
+			if config.SiteExists(dir) {
+				siteConfig, err := config.LoadSiteProperties(dir)
+				if err != nil {
+					ui.PrintError("Failed to load site.properties: %v", err)
+					os.Exit(1)
+				}
+				name = siteConfig.Name
+			} else if config.WordPressExists(dir) {
 				wpConfig, err := config.LoadWordPressProperties(dir)
 				if err != nil {
 					ui.PrintError("Failed to load wordpress.properties: %v", err)
@@ -531,7 +558,7 @@ var deleteCmd = &cobra.Command{
 				name = wpConfig.Name
 			}
 
-			// If no name from wordpress.properties, try plugin/theme
+			// If no name from site/wordpress.properties, try plugin/theme
 			if name == "" {
 				if config.PluginExists(dir) {
 					cfg, err := config.LoadPluginProperties(dir)
@@ -551,7 +578,7 @@ var deleteCmd = &cobra.Command{
 			}
 
 			if name == "" {
-				ui.PrintError("No wordpress.properties, plugin.properties, or theme.properties found in current directory")
+				ui.PrintError("No site.properties, wordpress.properties, plugin.properties, or theme.properties found in current directory")
 				ui.PrintInfo("Specify instance name: wordsmith wordpress delete <name>")
 				os.Exit(1)
 			}

@@ -27,40 +27,9 @@ echo -e "${BLUE}Cleaning previous build...${NC}"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# Get version from latest git tag
+# Get version using vermouth
 echo -e "${BLUE}Reading version from git tags...${NC}"
-GIT_DESCRIBE=$(git describe --tags --match "v*.*.*" 2>/dev/null || echo "v0.1.0")
-
-# Parse git describe output
-# Format: v0.1.0 or v0.1.0-5-g1a2b3c4 (if commits exist after tag)
-if [[ "$GIT_DESCRIBE" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9]+)-g([0-9a-f]+))?$ ]]; then
-    MAJOR="${BASH_REMATCH[1]}"
-    MINOR="${BASH_REMATCH[2]}"
-    MAINTENANCE="${BASH_REMATCH[3]}"
-    COMMIT_COUNT="${BASH_REMATCH[5]}"
-
-    # If there are commits after the tag, append commit count to maintenance
-    if [[ -n "$COMMIT_COUNT" ]]; then
-        MAINTENANCE="${MAINTENANCE}-${COMMIT_COUNT}"
-        VERSION="${MAJOR}.${MINOR}.${MAINTENANCE}"
-    else
-        VERSION="${MAJOR}.${MINOR}.${MAINTENANCE}"
-    fi
-else
-    # Fallback
-    MAJOR=0
-    MINOR=1
-    MAINTENANCE=0
-    VERSION="0.1.0"
-fi
-
-# Check for uncommitted local changes
-if [[ -n $(git status --porcelain 2>/dev/null) ]]; then
-    TIMESTAMP=$(date +"%m%d%H%M")
-    MAINTENANCE="${MAINTENANCE}-${TIMESTAMP}"
-    VERSION="${MAJOR}.${MINOR}.${MAINTENANCE}"
-    echo -e "${BLUE}Detected uncommitted changes, appending timestamp${NC}"
-fi
+VERSION=$(vermouth 2>/dev/null || curl -sfL https://raw.githubusercontent.com/abrayall/vermouth/refs/heads/main/vermouth.sh | sh -)
 
 echo -e "${GREEN}Building version: ${VERSION}${NC}"
 echo ""

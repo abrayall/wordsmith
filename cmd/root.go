@@ -27,7 +27,7 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.Long = ui.Divider() + "\n" + ui.Banner() + "\n" + ui.VersionLine(Version) + "\n\n" + ui.Divider() + "\n\n  A CLI tool for building WordPress plugins and themes"
+	rootCmd.Long = ui.Divider() + "\n" + ui.Banner() + "\n" + ui.VersionLine(Version) + "\n\n" + ui.Divider() + "\n\nA CLI tool for building WordPress plugins and themes"
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(initCmd)
 }

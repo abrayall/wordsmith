@@ -120,6 +120,117 @@ List all WordPress environments:
 wordsmith wordpress ps
 ```
 
+### Site Management
+
+Sites are complete WordPress projects containing multiple plugins and themes. A site directory has:
+- `site.properties` - Configuration file
+- `plugins/` - Local plugins (zip files or source directories)
+- `themes/` - Local themes (zip files or source directories)
+
+#### Initialize a Site
+
+```bash
+mkdir my-site && cd my-site
+wordsmith site init
+wordsmith site init --name="My Site"
+```
+
+This creates:
+```
+my-site/
+├── site.properties
+├── plugins/
+└── themes/
+```
+
+#### site.properties
+
+```yaml
+name: my-site
+description: A WordPress site
+# url: https://example.com
+
+# Docker image (defaults to wordpress:latest)
+# image: wordpress:6.4-php8.2
+
+# Plugins from WordPress.org, GitHub, or URLs
+plugins:
+  - akismet
+  - https://github.com/owner/repo
+  - slug: woocommerce
+    version: 8.0.0
+
+# Themes from WordPress.org, GitHub, or URLs
+themes:
+  - flavor
+```
+
+Site properties support all the same options as `wordpress.properties`.
+
+#### Adding Local Plugins and Themes
+
+Place plugins in the `plugins/` directory:
+```
+plugins/
+├── my-plugin/              # Source directory with plugin.properties
+│   ├── plugin.properties
+│   └── my-plugin.php
+├── another-plugin.zip      # Pre-built zip file
+└── premium-plugin/
+    └── premium-plugin.zip  # Zip inside a directory
+```
+
+Place themes in the `themes/` directory:
+```
+themes/
+├── my-theme/               # Source directory with theme.properties
+│   ├── theme.properties
+│   └── style.css
+└── purchased-theme.zip     # Pre-built zip file
+```
+
+Source directories (with `plugin.properties` or `theme.properties`) are automatically built before deployment.
+
+#### Start a Site
+
+```bash
+wordsmith site start
+```
+
+This is an alias for `wordsmith wordpress start` - both commands work with `site.properties`.
+
+#### Build Site Plugins and Themes
+
+```bash
+wordsmith site build
+```
+
+Builds all source plugins and themes in the site.
+
+#### Build Docker Image
+
+```bash
+wordsmith site build docker
+```
+
+Creates a Docker image with WordPress and all plugins/themes pre-installed. The image:
+- Uses the base image from `site.properties` (or `wordpress:latest`)
+- Includes all local plugins and themes from the `plugins/` and `themes/` directories
+- Installs plugins and themes from WordPress.org, GitHub, or URLs specified in `site.properties`
+- Activates plugins and themes automatically on container startup
+
+Run the built image:
+```bash
+docker run -p 8080:80 my-site:latest
+```
+
+#### Stop and Delete
+
+```bash
+wordsmith site stop           # Stop the site
+wordsmith site delete         # Delete all site data
+```
+
 ### Deploy
 
 Build and deploy to the running WordPress container:
