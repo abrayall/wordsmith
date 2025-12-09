@@ -360,6 +360,30 @@ domain-path=/languages
 
 The `slug` field is optional. If not specified, it's derived from the `name` field (lowercased, spaces replaced with dashes, special characters removed).
 
+#### Libraries
+
+Include external PHP libraries in your plugin or theme build using the `libraries` property:
+
+```yaml
+libraries:
+  - https://github.com/owner/php-library           # GitHub repo (latest release)
+  - https://github.com/owner/another-lib:v1.0.0   # GitHub repo with specific version
+  - https://example.com/library.zip                # Direct zip URL
+  - ./vendor/local-lib.zip                         # Local zip file
+  - name: custom-name
+    url: https://github.com/owner/repo
+    version: 2.0.0
+```
+
+Libraries are downloaded, extracted, and copied into the built plugin/theme at the top level using the library name as the directory. For example, a library named `php-utils` would be available at `my-plugin/php-utils/` in the built zip.
+
+**Library name resolution:**
+- Explicit `name` property takes precedence
+- GitHub URLs: uses the repository name (e.g., `https://github.com/owner/my-lib` → `my-lib`)
+- Zip URLs: uses the filename without extension (e.g., `library.zip` → `library`)
+
+**Caching:** Libraries are cached in `~/.wordsmith/library/` to avoid re-downloading on subsequent builds.
+
 ### theme.properties
 
 ```properties

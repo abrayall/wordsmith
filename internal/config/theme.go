@@ -31,6 +31,9 @@ type ThemeConfig struct {
 	// Files/directories to exclude (supports wildcards)
 	Exclude []string
 
+	// Libraries to include in the build
+	Libraries []LibrarySpec
+
 	// Minify CSS/JS files
 	Minify bool
 }
@@ -63,6 +66,7 @@ func LoadThemeProperties(dir string) (*ThemeConfig, error) {
 		Tags:        props.Get("tags"),
 		Include:     props.GetList("include"),
 		Exclude:     props.GetList("exclude"),
+		Libraries:   ParseLibraries(props),
 		Minify:      props.GetBool("minify"),
 	}
 

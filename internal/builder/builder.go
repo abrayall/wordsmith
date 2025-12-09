@@ -214,6 +214,16 @@ func (b *Builder) Build() error {
 		return fmt.Errorf("failed to write plugin.properties: %w", err)
 	}
 
+	// Copy libraries to stage directory
+	if len(b.Config.Libraries) > 0 {
+		if !b.Quiet {
+			ui.PrintInfo("Copying libraries...")
+		}
+		if err := b.copyLibraries(stageDir); err != nil {
+			return fmt.Errorf("failed to copy libraries: %w", err)
+		}
+	}
+
 	b.cleanDevFiles(stageDir)
 
 	// Set permissions on all files before zipping
@@ -570,4 +580,25 @@ func chmodAll(dir string, mode os.FileMode) error {
 		}
 		return os.Chmod(path, mode)
 	})
+}
+
+// copyLibraries resolves and copies all libraries to the stage directory
+func (b *Builder) copyLibraries(stageDir string) error {
+	for _, lib := range b.Config.Libraries {
+		if !b.Quiet {
+			ui.PrintInfo("  Resolving library: %s", lib.Name)
+		}
+
+		// Resolve the library to a local path
+		libPath, err := config.ResolveLibrary(lib)
+		if err != nil {
+			return fmt.Errorf("failed to resolve library %s: %w", lib.Name, err)
+		}
+
+		// Copy to stage directory
+		if err := config.CopyLibraryToDir(libPath, stageDir, lib.Name); err != nil {
+			return fmt.Errorf("failed to copy library %s: %w", lib.Name, err)
+		}
+	}
+	return nil
 }

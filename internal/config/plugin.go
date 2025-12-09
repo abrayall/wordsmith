@@ -28,6 +28,9 @@ type PluginConfig struct {
 	// Files/directories to exclude (supports wildcards)
 	Exclude []string
 
+	// Libraries to include in the build
+	Libraries []LibrarySpec
+
 	// Obfuscate PHP files
 	Obfuscate bool
 
@@ -60,6 +63,7 @@ func LoadPluginProperties(dir string) (*PluginConfig, error) {
 		RequiresPHP: props.Get("requires-php"),
 		Include:     props.GetList("include"),
 		Exclude:     props.GetList("exclude"),
+		Libraries:   ParseLibraries(props),
 		Obfuscate:   props.GetBool("obfuscate"),
 		Minify:      props.GetBool("minify"),
 	}
