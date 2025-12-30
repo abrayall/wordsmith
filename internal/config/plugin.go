@@ -31,11 +31,17 @@ type PluginConfig struct {
 	// Libraries to include in the build
 	Libraries []LibrarySpec
 
+	// Plugin dependencies (other plugins this plugin requires)
+	Plugins []LibrarySpec
+
 	// Obfuscate PHP files
 	Obfuscate bool
 
 	// Minify CSS/JS files
 	Minify bool
+
+	// Settings to deploy to WordPress database
+	Settings map[string]interface{}
 }
 
 // LoadPluginProperties loads plugin configuration from plugin.properties file
@@ -64,8 +70,10 @@ func LoadPluginProperties(dir string) (*PluginConfig, error) {
 		Include:     props.GetList("include"),
 		Exclude:     props.GetList("exclude"),
 		Libraries:   ParseLibraries(props),
+		Plugins:     ParsePlugins(props),
 		Obfuscate:   props.GetBool("obfuscate"),
 		Minify:      props.GetBool("minify"),
+		Settings:    ParseSettings(props),
 	}
 
 	// Validate required fields

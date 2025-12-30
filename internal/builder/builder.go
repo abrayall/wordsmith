@@ -1,9 +1,7 @@
 package builder
 
 import (
-	"archive/zip"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,27 +10,31 @@ import (
 	"wordsmith/internal/config"
 	"wordsmith/internal/obfuscator"
 	"wordsmith/internal/ui"
-	"wordsmith/internal/version"
 )
 
-type Builder struct {
-	SourceDir string
-	BuildDir  string
-	WorkDir   string
-	Config    *config.PluginConfig
-	Version   *version.Version
-	Quiet     bool
+// PluginDependency represents a resolved plugin dependency
+type PluginDependency struct {
+	Slug    string // WordPress slug for installation/activation
+	Path    string // Local path to built/resolved plugin (empty for WP.org plugins)
+	IsWPOrg bool   // True if WordPress.org plugin
+	Version string // Version if specified
 }
 
+// Builder builds WordPress plugins
+type Builder struct {
+	BaseBuilder
+	Config       *config.PluginConfig
+	Dependencies []PluginDependency // Resolved plugin dependencies
+}
+
+// New creates a new plugin Builder
 func New(sourceDir string) *Builder {
-	buildDir := filepath.Join(sourceDir, "build")
 	return &Builder{
-		SourceDir: sourceDir,
-		BuildDir:  buildDir,
-		WorkDir:   filepath.Join(buildDir, "work"),
+		BaseBuilder: NewBaseBuilder(sourceDir),
 	}
 }
 
+// Build builds the plugin
 func (b *Builder) Build() error {
 	if !b.Quiet {
 		ui.PrintInfo("Loading plugin.properties...")
@@ -43,57 +45,33 @@ func (b *Builder) Build() error {
 	}
 	b.Config = cfg
 
+	// Parse version
 	if cfg.Version != "" {
-		b.Version = &version.Version{
-			Major:       0,
-			Minor:       0,
-			Maintenance: cfg.Version,
-		}
-		re := regexp.MustCompile(`^(\d+)\.(\d+)\.(.+)$`)
-		if matches := re.FindStringSubmatch(cfg.Version); matches != nil {
-			fmt.Sscanf(matches[1], "%d", &b.Version.Major)
-			fmt.Sscanf(matches[2], "%d", &b.Version.Minor)
-			b.Version.Maintenance = matches[3]
-		}
+		b.Version = ParseVersion(cfg.Version)
 	} else {
-		if !b.Quiet {
-			ui.PrintInfo("Reading version from git tags...")
-		}
-		ver, err := version.GetFromGit(b.SourceDir)
+		ver, err := b.GetVersionFromGit()
 		if err != nil {
-			return fmt.Errorf("failed to get version from git: %w", err)
+			return err
 		}
 		b.Version = ver
-		if ver.IsDirty && !b.Quiet {
-			ui.PrintWarning("Detected uncommitted changes, appending timestamp")
-		}
 	}
 
-	if b.Quiet {
-		ui.PrintInfo("Building %s v%s", b.Config.Name, b.Version.String())
-	} else {
-		fmt.Println()
-		ui.PrintKeyValue("Name", "    "+b.Config.Name)
-		ui.PrintKeyValue("Version", " "+b.Version.String())
-		fmt.Println()
-	}
+	b.PrintBuildInfo(b.Config.Name)
 
-	if !b.Quiet {
-		ui.PrintInfo("Cleaning build directory...")
-	}
-	if err := os.RemoveAll(b.BuildDir); err != nil {
-		return fmt.Errorf("failed to clean build directory: %w", err)
+	if err := b.CleanBuildDir(); err != nil {
+		return err
 	}
 
 	sourceWorkDir := filepath.Join(b.WorkDir, "source")
-	stageDir := filepath.Join(b.WorkDir, "stage")
+	stageDir, err := b.CreateStageDir()
+	if err != nil {
+		return err
+	}
+
 	pluginName := b.GetPluginSlug()
 
 	if err := os.MkdirAll(sourceWorkDir, 0755); err != nil {
 		return fmt.Errorf("failed to create source directory: %w", err)
-	}
-	if err := os.MkdirAll(stageDir, 0755); err != nil {
-		return fmt.Errorf("failed to create stage directory: %w", err)
 	}
 
 	if !b.Quiet {
@@ -103,7 +81,7 @@ func (b *Builder) Build() error {
 	mainFile := filepath.Base(b.Config.Main)
 	mainSrc := filepath.Join(b.SourceDir, b.Config.Main)
 
-	if err := b.copyFile(mainSrc, filepath.Join(sourceWorkDir, mainFile)); err != nil {
+	if err := CopyFile(mainSrc, filepath.Join(sourceWorkDir, mainFile)); err != nil {
 		return fmt.Errorf("failed to copy main plugin file: %w", err)
 	}
 
@@ -127,17 +105,17 @@ func (b *Builder) Build() error {
 			}
 		} else {
 			if strings.HasSuffix(include, ".php") {
-				if err := b.copyFile(src, filepath.Join(sourceWorkDir, include)); err != nil {
+				if err := CopyFile(src, filepath.Join(sourceWorkDir, include)); err != nil {
 					return fmt.Errorf("failed to copy file %s: %w", include, err)
 				}
 			} else {
 				dst := filepath.Join(stageDir, include)
 				if b.Config.Minify && (strings.HasSuffix(include, ".css") || strings.HasSuffix(include, ".js")) {
-					if err := b.copyAndMinify(src, dst); err != nil {
+					if err := CopyAndMinify(src, dst, true); err != nil {
 						return fmt.Errorf("failed to minify file %s: %w", include, err)
 					}
 				} else {
-					if err := b.copyFile(src, dst); err != nil {
+					if err := CopyFile(src, dst); err != nil {
 						return fmt.Errorf("failed to copy file %s: %w", include, err)
 					}
 				}
@@ -148,7 +126,7 @@ func (b *Builder) Build() error {
 	readmeSrc := filepath.Join(b.SourceDir, "readme.txt")
 	readmeDst := filepath.Join(stageDir, "readme.txt")
 	if _, err := os.Stat(readmeSrc); err == nil {
-		if err := b.copyFile(readmeSrc, readmeDst); err != nil {
+		if err := CopyFile(readmeSrc, readmeDst); err != nil {
 			ui.PrintWarning("Failed to copy readme.txt: %v", err)
 		}
 	} else {
@@ -205,7 +183,7 @@ func (b *Builder) Build() error {
 	}
 
 	versionFile := filepath.Join(stageDir, "version.properties")
-	if err := b.writeVersionProperties(versionFile); err != nil {
+	if err := WriteVersionProperties(versionFile, b.Config.Name, b.Version); err != nil {
 		return fmt.Errorf("failed to write version.properties: %w", err)
 	}
 
@@ -219,15 +197,25 @@ func (b *Builder) Build() error {
 		if !b.Quiet {
 			ui.PrintInfo("Copying libraries...")
 		}
-		if err := b.copyLibraries(stageDir); err != nil {
+		if err := CopyLibraries(b.Config.Libraries, stageDir, b.Quiet); err != nil {
 			return fmt.Errorf("failed to copy libraries: %w", err)
 		}
 	}
 
-	b.cleanDevFiles(stageDir)
+	// Build/resolve plugin dependencies
+	if len(b.Config.Plugins) > 0 {
+		if !b.Quiet {
+			ui.PrintInfo("Resolving plugin dependencies...")
+		}
+		if err := b.buildPluginDependencies(); err != nil {
+			return fmt.Errorf("failed to resolve plugin dependencies: %w", err)
+		}
+	}
+
+	CleanDevFiles(stageDir)
 
 	// Set permissions on all files before zipping
-	if err := chmodAll(stageDir, 0777); err != nil {
+	if err := ChmodAll(stageDir, 0777); err != nil {
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
@@ -235,7 +223,7 @@ func (b *Builder) Build() error {
 		ui.PrintInfo("Creating ZIP archive...")
 	}
 	zipPath := filepath.Join(b.BuildDir, fmt.Sprintf("%s-%s.zip", pluginName, b.Version.String()))
-	if err := b.createZip(stageDir, zipPath, pluginName); err != nil {
+	if err := CreateZip(stageDir, zipPath, pluginName); err != nil {
 		return fmt.Errorf("failed to create ZIP: %w", err)
 	}
 
@@ -247,18 +235,7 @@ func (b *Builder) Build() error {
 	return nil
 }
 
-func (b *Builder) sanitizeName(name string) string {
-	result := strings.ToLower(name)
-	result = strings.ReplaceAll(result, " ", "-")
-	re := regexp.MustCompile(`[^a-z0-9-]`)
-	result = re.ReplaceAllString(result, "")
-	return result
-}
-
 // GetPluginSlug returns the WordPress plugin slug (directory name) for this plugin.
-// If slug is explicitly set in plugin.properties, it is used as-is.
-// Otherwise, the slug is derived from the sanitized name.
-// Must be called after Build() as it requires Config to be loaded.
 func (b *Builder) GetPluginSlug() string {
 	if b.Config == nil {
 		return ""
@@ -266,32 +243,7 @@ func (b *Builder) GetPluginSlug() string {
 	if b.Config.Slug != "" {
 		return b.Config.Slug
 	}
-	return b.sanitizeName(b.Config.Name)
-}
-
-func (b *Builder) copyFile(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
-
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
-
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	_, err = io.Copy(dstFile, srcFile)
-	return err
-}
-
-func (b *Builder) copyDirSplit(src, relBase, phpDst, otherDst string) error {
-	return b.copyDirSplitWithExcludes(src, relBase, phpDst, otherDst, nil)
+	return SanitizeName(b.Config.Name)
 }
 
 func (b *Builder) copyDirSplitWithExcludes(src, relBase, phpDst, otherDst string, excludes []string) error {
@@ -325,39 +277,19 @@ func (b *Builder) copyDirSplitWithExcludes(src, relBase, phpDst, otherDst string
 		}
 
 		if strings.HasSuffix(info.Name(), ".php") {
-			return b.copyFile(path, filepath.Join(phpDst, fullRel))
+			return CopyFile(path, filepath.Join(phpDst, fullRel))
 		}
 
 		dst := filepath.Join(otherDst, fullRel)
 		if b.Config.Minify && (strings.HasSuffix(info.Name(), ".css") || strings.HasSuffix(info.Name(), ".js")) {
-			return b.copyAndMinify(path, dst)
+			return CopyAndMinify(path, dst, true)
 		}
-		return b.copyFile(path, dst)
+		return CopyFile(path, dst)
 	})
 }
 
-func (b *Builder) copyAndMinify(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
-
-	content, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-
-	var minified string
-	if strings.HasSuffix(src, ".css") {
-		minified = obfuscator.MinifyCSS(string(content))
-	} else {
-		minified = obfuscator.MinifyJS(string(content))
-	}
-
-	return os.WriteFile(dst, []byte(minified), 0644)
-}
-
 func (b *Builder) replaceVersionConstants(content string) string {
-	pluginName := strings.ToUpper(b.sanitizeName(b.Config.Name))
+	pluginName := strings.ToUpper(SanitizeName(b.Config.Name))
 	pluginName = strings.ReplaceAll(pluginName, "-", "_")
 
 	re := regexp.MustCompile(`define\s*\(\s*['"]` + pluginName + `_VERSION['"]\s*,\s*['"][^'"]*['"]\s*\)`)
@@ -406,6 +338,10 @@ func (b *Builder) generatePluginHeader(path string) error {
 	if b.Config.RequiresPHP != "" {
 		header += fmt.Sprintf(" * Requires PHP: %s\n", b.Config.RequiresPHP)
 	}
+	// Add Requires Plugins header for WordPress.org plugin dependencies
+	if requiresPlugins := b.getRequiresPluginsFromConfig(); requiresPlugins != "" {
+		header += fmt.Sprintf(" * Requires Plugins: %s\n", requiresPlugins)
+	}
 	header += " */\n"
 
 	contentStr := string(content)
@@ -418,18 +354,6 @@ func (b *Builder) generatePluginHeader(path string) error {
 	}
 
 	return os.WriteFile(path, []byte(updated), 0644)
-}
-
-func (b *Builder) writeVersionProperties(path string) error {
-	content := fmt.Sprintf(`# %s Version Information
-# Generated by wordsmith
-
-major=%d
-minor=%d
-maintenance=%s
-`, b.Config.Name, b.Version.Major, b.Version.Minor, b.Version.Maintenance)
-
-	return os.WriteFile(path, []byte(content), 0644)
 }
 
 func (b *Builder) writePluginProperties(path string) error {
@@ -509,96 +433,184 @@ License URI: %s
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
-func (b *Builder) cleanDevFiles(dir string) {
-	patterns := []string{".DS_Store", "*.swp", "*.swo", "*~", ".git", ".gitignore"}
+// buildPluginDependencies resolves and builds all plugin dependencies.
+// For WordPress.org slugs, just records them for the header.
+// For local directories with plugin.properties, builds them recursively.
+// For URLs/zips, downloads and extracts them.
+func (b *Builder) buildPluginDependencies() error {
+	pluginsDir := filepath.Join(b.WorkDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create plugins directory: %w", err)
+	}
 
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	for _, spec := range b.Config.Plugins {
+		dep, err := b.resolvePluginDependency(spec, pluginsDir)
 		if err != nil {
-			return nil
+			return fmt.Errorf("failed to resolve plugin '%s': %w", spec.Name, err)
 		}
+		b.Dependencies = append(b.Dependencies, dep)
+	}
 
-		name := info.Name()
-		for _, pattern := range patterns {
-			if matched, _ := filepath.Match(pattern, name); matched {
-				os.RemoveAll(path)
-				break
-			}
-		}
-		return nil
-	})
+	return nil
 }
 
-func (b *Builder) createZip(sourceDir, zipPath, baseName string) error {
-	zipFile, err := os.Create(zipPath)
-	if err != nil {
-		return err
+// resolvePluginDependency resolves a single plugin dependency
+func (b *Builder) resolvePluginDependency(spec config.LibrarySpec, pluginsDir string) (PluginDependency, error) {
+	// Check if this is a WordPress.org slug
+	if config.IsWordPressOrgSlug(spec) {
+		return PluginDependency{
+			Slug:    spec.Name,
+			IsWPOrg: true,
+			Version: spec.Version,
+		}, nil
 	}
-	defer zipFile.Close()
 
-	archive := zip.NewWriter(zipFile)
-	defer archive.Close()
+	// Resolve the path relative to source directory for local paths
+	url := spec.URL
+	if config.IsLocalPath(url) && !filepath.IsAbs(url) {
+		url = filepath.Join(b.SourceDir, url)
+	}
 
-	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+	// Check if it's a directory with plugin.properties (needs building)
+	if info, err := os.Stat(url); err == nil && info.IsDir() {
+		pluginPropsPath := filepath.Join(url, "plugin.properties")
+		if _, err := os.Stat(pluginPropsPath); err == nil {
+			return b.buildPluginFromSource(url, pluginsDir)
+		}
+	}
+
+	// Otherwise resolve like a library (download/extract)
+	resolvedSpec := config.LibrarySpec{
+		Name:    spec.Name,
+		URL:     url,
+		Version: spec.Version,
+	}
+
+	libPath, err := config.ResolveLibrary(resolvedSpec)
+	if err != nil {
+		return PluginDependency{}, err
+	}
+
+	// Copy to plugins directory
+	targetDir := filepath.Join(pluginsDir, spec.Name)
+	if err := copyDir(libPath, targetDir); err != nil {
+		return PluginDependency{}, fmt.Errorf("failed to copy plugin: %w", err)
+	}
+
+	return PluginDependency{
+		Slug:    spec.Name,
+		Path:    targetDir,
+		IsWPOrg: false,
+		Version: spec.Version,
+	}, nil
+}
+
+// buildPluginFromSource builds a plugin from a source directory with plugin.properties
+func (b *Builder) buildPluginFromSource(srcDir string, pluginsDir string) (PluginDependency, error) {
+	// Check if already built
+	stageDir := filepath.Join(srcDir, "build", "work", "stage")
+	if info, err := os.Stat(stageDir); err == nil && info.IsDir() {
+		// Use the pre-built version
+		cfg, err := config.LoadPluginProperties(srcDir)
+		if err != nil {
+			return PluginDependency{}, fmt.Errorf("failed to load plugin.properties: %w", err)
+		}
+
+		slug := SanitizeName(cfg.Name)
+		if cfg.Slug != "" {
+			slug = cfg.Slug
+		}
+
+		targetDir := filepath.Join(pluginsDir, slug)
+		if err := copyDir(stageDir, targetDir); err != nil {
+			return PluginDependency{}, fmt.Errorf("failed to copy built plugin: %w", err)
+		}
+
+		return PluginDependency{
+			Slug:    slug,
+			Path:    targetDir,
+			IsWPOrg: false,
+		}, nil
+	}
+
+	// Build the plugin
+	depBuilder := New(srcDir)
+	depBuilder.Quiet = true
+	if err := depBuilder.Build(); err != nil {
+		return PluginDependency{}, fmt.Errorf("failed to build plugin: %w", err)
+	}
+
+	slug := depBuilder.GetPluginSlug()
+	builtStageDir := filepath.Join(srcDir, "build", "work", "stage")
+	targetDir := filepath.Join(pluginsDir, slug)
+
+	if err := copyDir(builtStageDir, targetDir); err != nil {
+		return PluginDependency{}, fmt.Errorf("failed to copy built plugin: %w", err)
+	}
+
+	return PluginDependency{
+		Slug:    slug,
+		Path:    targetDir,
+		IsWPOrg: false,
+	}, nil
+}
+
+// GetPluginDependencies returns all resolved plugin dependencies
+func (b *Builder) GetPluginDependencies() []PluginDependency {
+	return b.Dependencies
+}
+
+// GetRequiresPlugins returns a comma-separated list of WordPress.org plugin slugs
+// for use in the Requires Plugins header
+func (b *Builder) GetRequiresPlugins() string {
+	var slugs []string
+	for _, dep := range b.Dependencies {
+		if dep.IsWPOrg {
+			slugs = append(slugs, dep.Slug)
+		}
+	}
+	return strings.Join(slugs, ", ")
+}
+
+// getRequiresPluginsFromConfig returns WordPress.org plugin slugs from config
+// Used during header generation before dependencies are fully resolved
+func (b *Builder) getRequiresPluginsFromConfig() string {
+	var slugs []string
+	for _, spec := range b.Config.Plugins {
+		if config.IsWordPressOrgSlug(spec) {
+			slugs = append(slugs, spec.Name)
+		}
+	}
+	return strings.Join(slugs, ", ")
+}
+
+// copyDir copies a directory recursively
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		relPath, err := filepath.Rel(sourceDir, path)
+		relPath, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
 		}
-		archivePath := filepath.Join(baseName, relPath)
+
+		targetPath := filepath.Join(dst, relPath)
 
 		if info.IsDir() {
-			if relPath != "." {
-				_, err = archive.Create(archivePath + "/")
-			}
-			return err
+			return os.MkdirAll(targetPath, info.Mode())
 		}
 
-		writer, err := archive.Create(archivePath)
+		content, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
 
-		file, err := os.Open(path)
-		if err != nil {
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 			return err
 		}
-		defer file.Close()
 
-		_, err = io.Copy(writer, file)
-		return err
+		return os.WriteFile(targetPath, content, info.Mode())
 	})
-}
-
-// chmodAll recursively sets permissions on all files and directories
-func chmodAll(dir string, mode os.FileMode) error {
-	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		return os.Chmod(path, mode)
-	})
-}
-
-// copyLibraries resolves and copies all libraries to the stage directory
-func (b *Builder) copyLibraries(stageDir string) error {
-	for _, lib := range b.Config.Libraries {
-		if !b.Quiet {
-			ui.PrintInfo("  Resolving library: %s", lib.Name)
-		}
-
-		// Resolve the library to a local path
-		libPath, err := config.ResolveLibrary(lib)
-		if err != nil {
-			return fmt.Errorf("failed to resolve library %s: %w", lib.Name, err)
-		}
-
-		// Copy to stage directory
-		if err := config.CopyLibraryToDir(libPath, stageDir, lib.Name); err != nil {
-			return fmt.Errorf("failed to copy library %s: %w", lib.Name, err)
-		}
-	}
-	return nil
 }

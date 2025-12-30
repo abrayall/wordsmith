@@ -356,6 +356,9 @@ exclude=node_modules,tests,.*
 
 text-domain=my-plugin
 domain-path=/languages
+
+# Plugin dependencies (optional)
+plugins=woocommerce, ../shared-utils
 ```
 
 The `slug` field is optional. If not specified, it's derived from the `name` field (lowercased, spaces replaced with dashes, special characters removed).
@@ -382,7 +385,91 @@ Libraries are downloaded, extracted, and copied into the built plugin/theme at t
 - GitHub URLs: uses the repository name (e.g., `https://github.com/owner/my-lib` → `my-lib`)
 - Zip URLs: uses the filename without extension (e.g., `library.zip` → `library`)
 
-**Caching:** Libraries are cached in `~/.wordsmith/library/` to avoid re-downloading on subsequent builds.
+**Caching:** Libraries are cached in `~/.wordsmith/libraries/` by version. If GitHub is unreachable, the latest locally cached version is used.
+
+#### Plugin Dependencies
+
+Declare dependencies on other plugins using the `plugins` property. Dependencies are automatically resolved, built (if needed), and installed when deploying to a local WordPress environment.
+
+```yaml
+plugins:
+  - woocommerce                              # WordPress.org plugin (latest)
+  - jetpack:12.0                             # WordPress.org plugin with version
+  - slug: advanced-custom-fields             # WordPress.org with slug/version format
+    version: 6.0.0
+  - ../shared-utils                          # Local plugin directory (auto-built)
+  - https://github.com/owner/helper-plugin   # GitHub repo (latest release)
+  - https://github.com/owner/plugin:v2.0.0   # GitHub repo with specific version
+  - slug: custom-plugin                      # Plugin from URL with custom slug
+    uri: https://example.com/plugin.zip
+  - ./vendor/premium-plugin.zip              # Local zip file
+```
+
+**Supported formats:**
+- **Simple string**: `woocommerce` or `woocommerce:8.0` (WordPress.org with optional version)
+- **Object with slug/version**: `{ slug: woocommerce, version: 8.0 }` (WordPress.org)
+- **Object with slug/uri**: `{ slug: my-plugin, uri: ../path }` (local or URL with custom slug)
+- **Local path**: `../shared-utils` or `./vendor/plugin.zip`
+- **GitHub URL**: `https://github.com/owner/repo` or `https://github.com/owner/repo:v1.0`
+- **Direct URL**: `https://example.com/plugin.zip`
+
+WordPress.org slugs are added to the `Requires Plugins` header for WordPress 6.5+ native dependency handling. Other sources (local, GitHub, URLs) are resolved but not added to the header.
+
+**Build output:** Dependencies are resolved to `build/work/plugins/` but are **not bundled** in the main plugin's zip file. They are deployed as separate plugins.
+
+**Deployment behavior:** When running `wordsmith deploy`, all dependencies are installed and activated before the main plugin:
+- WordPress.org plugins are installed via `wp plugin install --activate`
+- Local/built plugins are deployed via `docker cp` and activated
+
+**WordPress header:** Only WordPress.org slugs are added to the `Requires Plugins` header in the generated plugin file:
+
+```php
+/**
+ * Plugin Name: My Plugin
+ * Requires Plugins: woocommerce, jetpack
+ */
+```
+
+This enables WordPress 6.5+ to show dependency warnings and prevent activation if dependencies are missing.
+
+#### Plugin Settings
+
+Configure WordPress options to be set in the database when deploying your plugin. This is useful for pre-configuring plugin settings during development.
+
+```yaml
+settings:
+  - simple_option=value
+  - api_key=my-api-key
+  - wp_mail_smtp[mail][mailer]=smtp
+  - wp_mail_smtp[mail][from_email]=noreply@example.com
+  - wp_mail_smtp[smtp][host]=smtp.gmail.com
+  - wp_mail_smtp[smtp][port]=587
+  - wp_mail_smtp[smtp][encryption]=tls
+  - wp_mail_smtp[smtp][auth]=true
+```
+
+**Supported formats:**
+- **Simple values**: `option_name=value` - Sets a plain string option
+- **Bracket notation**: `option[key1][key2]=value` - Creates serialized PHP arrays
+
+Bracket notation entries are automatically grouped by the base option name and converted to nested PHP arrays. For example, the `wp_mail_smtp` entries above produce a single WordPress option with a nested array structure:
+
+```php
+array(
+    'mail' => array(
+        'mailer' => 'smtp',
+        'from_email' => 'noreply@example.com',
+    ),
+    'smtp' => array(
+        'host' => 'smtp.gmail.com',
+        'port' => '587',
+        'encryption' => 'tls',
+        'auth' => 'true',
+    ),
+)
+```
+
+Settings are deployed after plugin activation using `wp option update`. This happens automatically during `wordsmith deploy`.
 
 ### theme.properties
 

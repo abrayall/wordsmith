@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -230,6 +231,16 @@ var deployCmd = &cobra.Command{
 				ui.PrintInfo("Deploying to WordPress...")
 			}
 
+			// Deploy plugin dependencies first
+			networkName := instanceSlug + "-network"
+			dependencies := b.GetPluginDependencies()
+			if len(dependencies) > 0 {
+				if err := deployPluginDependencies(dependencies, containerName, networkName, instanceSlug, quiet); err != nil {
+					ui.PrintError("Failed to deploy plugin dependencies: %v", err)
+					os.Exit(1)
+				}
+			}
+
 			stageDir = fmt.Sprintf("%s/build/work/stage", dir)
 			containerPath = fmt.Sprintf("/var/www/html/wp-content/plugins/%s", slug)
 
@@ -243,7 +254,6 @@ var deployCmd = &cobra.Command{
 			}
 
 			// Activate plugin
-			networkName := instanceSlug + "-network"
 			activateCmd := exec.Command("docker", "run", "--rm",
 				"--network", networkName,
 				"--user", "33:33",
@@ -256,6 +266,17 @@ var deployCmd = &cobra.Command{
 				"wp", "plugin", "activate", slug,
 			)
 			activateCmd.Run()
+
+			// Deploy plugin settings
+			if len(cfg.Settings) > 0 {
+				if !quiet {
+					ui.PrintInfo("Deploying settings...")
+				}
+				if err := deployPluginSettings(cfg.Settings, networkName, instanceSlug, quiet); err != nil {
+					ui.PrintError("Failed to deploy settings: %v", err)
+					os.Exit(1)
+				}
+			}
 		}
 
 		if quiet {
@@ -285,4 +306,143 @@ func sanitizeForDocker(name string) string {
 		}
 	}
 	return clean
+}
+
+// deployPluginDependencies deploys all plugin dependencies before the main plugin
+func deployPluginDependencies(deps []builder.PluginDependency, containerName, networkName, instanceSlug string, quiet bool) error {
+	mysqlContainer := instanceSlug + "-mysql"
+
+	for _, dep := range deps {
+		if dep.IsWPOrg {
+			// Install from WordPress.org
+			if !quiet {
+				ui.PrintInfo("  Installing dependency '%s' from WordPress.org...", dep.Slug)
+			}
+
+			installArgs := []string{"run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", instanceSlug + "-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST=" + mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "plugin", "install", dep.Slug, "--activate",
+			}
+			if dep.Version != "" {
+				// Insert version before --activate
+				installArgs = append(installArgs[:len(installArgs)-1], "--version="+dep.Version, "--activate")
+			}
+
+			installCmd := exec.Command("docker", installArgs...)
+			if err := installCmd.Run(); err != nil {
+				return fmt.Errorf("failed to install plugin '%s': %w", dep.Slug, err)
+			}
+		} else if dep.Path != "" {
+			// Deploy built/resolved plugin via docker cp
+			if !quiet {
+				ui.PrintInfo("  Deploying dependency '%s'...", dep.Slug)
+			}
+
+			containerPath := fmt.Sprintf("/var/www/html/wp-content/plugins/%s", dep.Slug)
+
+			// Remove old version
+			dockerCmd := exec.Command("docker", "exec", containerName, "rm", "-rf", containerPath)
+			dockerCmd.Run()
+
+			// Copy new version
+			dockerCmd = exec.Command("docker", "cp", dep.Path+"/.", containerName+":"+containerPath)
+			if err := dockerCmd.Run(); err != nil {
+				return fmt.Errorf("failed to deploy plugin '%s': %w", dep.Slug, err)
+			}
+
+			// Activate
+			activateCmd := exec.Command("docker", "run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", instanceSlug+"-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST="+mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "plugin", "activate", dep.Slug,
+			)
+			activateCmd.Run()
+		}
+	}
+
+	return nil
+}
+
+// deployPluginSettings deploys plugin settings to the WordPress database
+func deployPluginSettings(settings map[string]interface{}, networkName, instanceSlug string, quiet bool) error {
+	if len(settings) == 0 {
+		return nil
+	}
+
+	mysqlContainer := instanceSlug + "-mysql"
+
+	for optionName, value := range settings {
+		if !quiet {
+			ui.PrintInfo("  Setting option '%s'...", optionName)
+		}
+
+		var updateArgs []string
+
+		switch v := value.(type) {
+		case string:
+			// Simple string value
+			updateArgs = []string{"run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", instanceSlug + "-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST=" + mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "option", "update", optionName, v,
+			}
+		case map[string]interface{}:
+			// Complex nested value - use JSON format
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				return fmt.Errorf("failed to marshal setting '%s': %w", optionName, err)
+			}
+
+			updateArgs = []string{"run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", instanceSlug + "-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST=" + mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "option", "update", optionName, string(jsonBytes), "--format=json",
+			}
+		default:
+			// Convert other types to string
+			updateArgs = []string{"run", "--rm",
+				"--network", networkName,
+				"--user", "33:33",
+				"-v", instanceSlug + "-wp:/var/www/html",
+				"-e", "WORDPRESS_DB_HOST=" + mysqlContainer,
+				"-e", "WORDPRESS_DB_USER=wordpress",
+				"-e", "WORDPRESS_DB_PASSWORD=wordpress",
+				"-e", "WORDPRESS_DB_NAME=wordpress",
+				"wordpress:cli",
+				"wp", "option", "update", optionName, fmt.Sprintf("%v", value),
+			}
+		}
+
+		updateCmd := exec.Command("docker", updateArgs...)
+		if err := updateCmd.Run(); err != nil {
+			return fmt.Errorf("failed to set option '%s': %w", optionName, err)
+		}
+	}
+
+	return nil
 }

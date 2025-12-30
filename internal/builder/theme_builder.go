@@ -1,7 +1,6 @@
 package builder
 
 import (
-	"archive/zip"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,29 +10,23 @@ import (
 	"strings"
 
 	"wordsmith/internal/config"
-	"wordsmith/internal/obfuscator"
 	"wordsmith/internal/ui"
-	"wordsmith/internal/version"
 )
 
+// ThemeBuilder builds WordPress themes
 type ThemeBuilder struct {
-	SourceDir string
-	BuildDir  string
-	WorkDir   string
-	Config    *config.ThemeConfig
-	Version   *version.Version
-	Quiet     bool
+	BaseBuilder
+	Config *config.ThemeConfig
 }
 
+// NewThemeBuilder creates a new theme Builder
 func NewThemeBuilder(sourceDir string) *ThemeBuilder {
-	buildDir := filepath.Join(sourceDir, "build")
 	return &ThemeBuilder{
-		SourceDir: sourceDir,
-		BuildDir:  buildDir,
-		WorkDir:   filepath.Join(buildDir, "work"),
+		BaseBuilder: NewBaseBuilder(sourceDir),
 	}
 }
 
+// Build builds the theme
 func (b *ThemeBuilder) Build() error {
 	if !b.Quiet {
 		ui.PrintInfo("Loading theme.properties...")
@@ -44,54 +37,29 @@ func (b *ThemeBuilder) Build() error {
 	}
 	b.Config = cfg
 
+	// Parse version
 	if cfg.Version != "" {
-		b.Version = &version.Version{
-			Major:       0,
-			Minor:       0,
-			Maintenance: cfg.Version,
-		}
-		re := regexp.MustCompile(`^(\d+)\.(\d+)\.(.+)$`)
-		if matches := re.FindStringSubmatch(cfg.Version); matches != nil {
-			fmt.Sscanf(matches[1], "%d", &b.Version.Major)
-			fmt.Sscanf(matches[2], "%d", &b.Version.Minor)
-			b.Version.Maintenance = matches[3]
-		}
+		b.Version = ParseVersion(cfg.Version)
 	} else {
-		if !b.Quiet {
-			ui.PrintInfo("Reading version from git tags...")
-		}
-		ver, err := version.GetFromGit(b.SourceDir)
+		ver, err := b.GetVersionFromGit()
 		if err != nil {
-			return fmt.Errorf("failed to get version from git: %w", err)
+			return err
 		}
 		b.Version = ver
-		if ver.IsDirty && !b.Quiet {
-			ui.PrintWarning("Detected uncommitted changes, appending timestamp")
-		}
 	}
 
-	if b.Quiet {
-		ui.PrintInfo("Building %s v%s", b.Config.Name, b.Version.String())
-	} else {
-		fmt.Println()
-		ui.PrintKeyValue("Name", "    "+b.Config.Name)
-		ui.PrintKeyValue("Version", " "+b.Version.String())
-		fmt.Println()
+	b.PrintBuildInfo(b.Config.Name)
+
+	if err := b.CleanBuildDir(); err != nil {
+		return err
 	}
 
-	if !b.Quiet {
-		ui.PrintInfo("Cleaning build directory...")
-	}
-	if err := os.RemoveAll(b.BuildDir); err != nil {
-		return fmt.Errorf("failed to clean build directory: %w", err)
+	stageDir, err := b.CreateStageDir()
+	if err != nil {
+		return err
 	}
 
-	stageDir := filepath.Join(b.WorkDir, "stage")
 	themeName := b.GetThemeSlug()
-
-	if err := os.MkdirAll(stageDir, 0755); err != nil {
-		return fmt.Errorf("failed to create stage directory: %w", err)
-	}
 
 	if !b.Quiet {
 		ui.PrintInfo("Copying theme files...")
@@ -102,7 +70,7 @@ func (b *ThemeBuilder) Build() error {
 	mainSrc := filepath.Join(b.SourceDir, b.Config.Main)
 	mainDst := filepath.Join(stageDir, mainFile)
 
-	if err := b.copyFile(mainSrc, mainDst); err != nil {
+	if err := CopyFile(mainSrc, mainDst); err != nil {
 		return fmt.Errorf("failed to copy main stylesheet: %w", err)
 	}
 
@@ -128,11 +96,11 @@ func (b *ThemeBuilder) Build() error {
 		} else {
 			dst := filepath.Join(stageDir, include)
 			if b.Config.Minify && (strings.HasSuffix(include, ".css") || strings.HasSuffix(include, ".js")) {
-				if err := b.copyAndMinify(src, dst); err != nil {
+				if err := CopyAndMinify(src, dst, true); err != nil {
 					return fmt.Errorf("failed to minify file %s: %w", include, err)
 				}
 			} else {
-				if err := b.copyFile(src, dst); err != nil {
+				if err := CopyFile(src, dst); err != nil {
 					return fmt.Errorf("failed to copy file %s: %w", include, err)
 				}
 			}
@@ -149,7 +117,7 @@ func (b *ThemeBuilder) Build() error {
 
 	// Write version.properties
 	versionFile := filepath.Join(stageDir, "version.properties")
-	if err := b.writeVersionProperties(versionFile); err != nil {
+	if err := WriteVersionProperties(versionFile, b.Config.Name, b.Version); err != nil {
 		return fmt.Errorf("failed to write version.properties: %w", err)
 	}
 
@@ -164,7 +132,7 @@ func (b *ThemeBuilder) Build() error {
 		if !b.Quiet {
 			ui.PrintInfo("Copying libraries...")
 		}
-		if err := b.copyLibraries(stageDir); err != nil {
+		if err := CopyLibraries(b.Config.Libraries, stageDir, b.Quiet); err != nil {
 			return fmt.Errorf("failed to copy libraries: %w", err)
 		}
 	}
@@ -185,10 +153,10 @@ func (b *ThemeBuilder) Build() error {
 	}
 
 	// Clean dev files
-	b.cleanDevFiles(stageDir)
+	CleanDevFiles(stageDir)
 
 	// Set permissions on all files before zipping
-	if err := chmodAll(stageDir, 0777); err != nil {
+	if err := ChmodAll(stageDir, 0777); err != nil {
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
@@ -197,7 +165,7 @@ func (b *ThemeBuilder) Build() error {
 		ui.PrintInfo("Creating ZIP archive...")
 	}
 	zipPath := filepath.Join(b.BuildDir, fmt.Sprintf("%s-%s.zip", themeName, b.Version.String()))
-	if err := b.createZip(stageDir, zipPath, themeName); err != nil {
+	if err := CreateZip(stageDir, zipPath, themeName); err != nil {
 		return fmt.Errorf("failed to create ZIP: %w", err)
 	}
 
@@ -209,18 +177,7 @@ func (b *ThemeBuilder) Build() error {
 	return nil
 }
 
-func (b *ThemeBuilder) sanitizeName(name string) string {
-	result := strings.ToLower(name)
-	result = strings.ReplaceAll(result, " ", "-")
-	re := regexp.MustCompile(`[^a-z0-9-]`)
-	result = re.ReplaceAllString(result, "")
-	return result
-}
-
 // GetThemeSlug returns the WordPress theme slug (directory name) for this theme.
-// If slug is explicitly set in theme.properties, it is used as-is.
-// Otherwise, the slug is derived from the sanitized name.
-// Must be called after Build() as it requires Config to be loaded.
 func (b *ThemeBuilder) GetThemeSlug() string {
 	if b.Config == nil {
 		return ""
@@ -228,24 +185,7 @@ func (b *ThemeBuilder) GetThemeSlug() string {
 	if b.Config.Slug != "" {
 		return b.Config.Slug
 	}
-	return b.sanitizeName(b.Config.Name)
-}
-
-func (b *ThemeBuilder) copyFile(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
-
-	content, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(dst, content, 0644)
-}
-
-func (b *ThemeBuilder) copyDir(src, dst string) error {
-	return b.copyDirWithExcludes(src, dst, nil)
+	return SanitizeName(b.Config.Name)
 }
 
 func (b *ThemeBuilder) copyDirWithExcludes(src, dst string, excludes []string) error {
@@ -274,30 +214,10 @@ func (b *ThemeBuilder) copyDirWithExcludes(src, dst string, excludes []string) e
 		}
 
 		if b.Config.Minify && (strings.HasSuffix(info.Name(), ".css") || strings.HasSuffix(info.Name(), ".js")) {
-			return b.copyAndMinify(path, targetPath)
+			return CopyAndMinify(path, targetPath, true)
 		}
-		return b.copyFile(path, targetPath)
+		return CopyFile(path, targetPath)
 	})
-}
-
-func (b *ThemeBuilder) copyAndMinify(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
-
-	content, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-
-	var minified string
-	if strings.HasSuffix(src, ".css") {
-		minified = obfuscator.MinifyCSS(string(content))
-	} else {
-		minified = obfuscator.MinifyJS(string(content))
-	}
-
-	return os.WriteFile(dst, []byte(minified), 0644)
 }
 
 func (b *ThemeBuilder) generateThemeHeader(path string) error {
@@ -362,18 +282,6 @@ func (b *ThemeBuilder) generateThemeHeader(path string) error {
 	return os.WriteFile(path, []byte(updated), 0644)
 }
 
-func (b *ThemeBuilder) writeVersionProperties(path string) error {
-	content := fmt.Sprintf(`# %s Version Information
-# Generated by wordsmith
-
-major=%d
-minor=%d
-maintenance=%s
-`, b.Config.Name, b.Version.Major, b.Version.Minor, b.Version.Maintenance)
-
-	return os.WriteFile(path, []byte(content), 0644)
-}
-
 func (b *ThemeBuilder) writeThemeProperties(path string) error {
 	var lines []string
 	lines = append(lines, "# Theme metadata")
@@ -420,35 +328,6 @@ func (b *ThemeBuilder) writeThemeProperties(path string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
-func (b *ThemeBuilder) cleanDevFiles(dir string) {
-	patterns := []string{".DS_Store", "*.swp", "*.swo", "*~", ".git", ".gitignore"}
-
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		name := info.Name()
-		for _, pattern := range patterns {
-			if matched, _ := filepath.Match(pattern, name); matched {
-				os.RemoveAll(path)
-				break
-			}
-		}
-		return nil
-	})
-}
-
-func (b *ThemeBuilder) createZip(sourceDir, zipPath, baseName string) error {
-	// Reuse the Builder's createZip by creating a temporary Builder
-	tempBuilder := &Builder{
-		SourceDir: b.SourceDir,
-		BuildDir:  b.BuildDir,
-		WorkDir:   b.WorkDir,
-	}
-	return tempBuilder.createZip(sourceDir, zipPath, baseName)
-}
-
 // GetStagePath returns the path to the staged theme directory
 func (b *ThemeBuilder) GetStagePath() string {
 	return filepath.Join(b.WorkDir, "stage")
@@ -456,7 +335,7 @@ func (b *ThemeBuilder) GetStagePath() string {
 
 // GetThemeName returns the sanitized theme name
 func (b *ThemeBuilder) GetThemeName() string {
-	return b.sanitizeName(b.Config.Name)
+	return SanitizeName(b.Config.Name)
 }
 
 // GetParentThemePath returns the path to the parent theme directory, if it exists
@@ -580,7 +459,7 @@ func (b *ThemeBuilder) updateChildStyleDependencies(stageDir string) error {
 
 	// Find and replace the child CSS dependency array
 	// Look for pattern like: array('theme-style') in the child CSS enqueue
-	slug := b.sanitizeName(b.Config.Name)
+	slug := SanitizeName(b.Config.Name)
 
 	// Match the specific enqueue for child.css with its dependency array
 	re := regexp.MustCompile(`(wp_enqueue_style\s*\(\s*'` + regexp.QuoteMeta(slug) + `-child'\s*,\s*[^,]+,\s*)array\s*\([^)]*\)`)
@@ -618,7 +497,7 @@ func (b *ThemeBuilder) fetchParentTheme() error {
 
 	// Check if it's a zip file
 	if strings.HasSuffix(strings.ToLower(srcPath), ".zip") {
-		return b.extractZip(srcPath, parentDir)
+		return ExtractZip(srcPath, parentDir)
 	}
 
 	// It's a directory - check if it has theme.properties (needs to be built)
@@ -630,13 +509,13 @@ func (b *ThemeBuilder) fetchParentTheme() error {
 
 		if _, err := os.Stat(builtPath); err == nil {
 			// Use existing build
-			if err := b.copyDir(builtPath, parentDir); err != nil {
+			if err := CopyDir(builtPath, parentDir); err != nil {
 				return err
 			}
 			// Also copy grandparent if exists
 			if _, err := os.Stat(parentParentPath); err == nil {
 				grandparentDir := filepath.Join(parentDir, "parent")
-				return b.copyDir(parentParentPath, grandparentDir)
+				return CopyDir(parentParentPath, grandparentDir)
 			}
 			return nil
 		}
@@ -652,7 +531,7 @@ func (b *ThemeBuilder) fetchParentTheme() error {
 		}
 
 		// Copy the built theme
-		if err := b.copyDir(parentBuilder.GetStagePath(), parentDir); err != nil {
+		if err := CopyDir(parentBuilder.GetStagePath(), parentDir); err != nil {
 			return err
 		}
 
@@ -660,13 +539,13 @@ func (b *ThemeBuilder) fetchParentTheme() error {
 		grandparentPath := parentBuilder.GetParentThemePath()
 		if grandparentPath != "" {
 			grandparentDir := filepath.Join(parentDir, "parent")
-			return b.copyDir(grandparentPath, grandparentDir)
+			return CopyDir(grandparentPath, grandparentDir)
 		}
 		return nil
 	}
 
 	// It's a regular directory - copy it directly
-	return b.copyDir(srcPath, parentDir)
+	return CopyDir(srcPath, parentDir)
 }
 
 func (b *ThemeBuilder) downloadAndExtractTheme(url, destDir string) error {
@@ -696,97 +575,5 @@ func (b *ThemeBuilder) downloadAndExtractTheme(url, destDir string) error {
 	tmpFile.Close()
 
 	// Extract the zip
-	return b.extractZip(tmpFile.Name(), destDir)
-}
-
-func (b *ThemeBuilder) extractZip(zipPath, destDir string) error {
-	r, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return fmt.Errorf("failed to open zip: %w", err)
-	}
-	defer r.Close()
-
-	// Find the root directory in the zip (if any)
-	var rootDir string
-	for _, f := range r.File {
-		parts := strings.Split(f.Name, "/")
-		if len(parts) > 1 && rootDir == "" {
-			rootDir = parts[0]
-		}
-		break
-	}
-
-	for _, f := range r.File {
-		// Calculate destination path
-		name := f.Name
-
-		// Strip the root directory if all files are in one
-		if rootDir != "" && strings.HasPrefix(name, rootDir+"/") {
-			name = strings.TrimPrefix(name, rootDir+"/")
-		}
-
-		if name == "" {
-			continue
-		}
-
-		fpath := filepath.Join(destDir, name)
-
-		// Check for ZipSlip vulnerability
-		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path: %s", fpath)
-		}
-
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(fpath, os.ModePerm)
-			continue
-		}
-
-		// Create parent directories
-		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
-			return err
-		}
-
-		// Extract file
-		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return err
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			outFile.Close()
-			return err
-		}
-
-		_, err = io.Copy(outFile, rc)
-		outFile.Close()
-		rc.Close()
-
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// copyLibraries resolves and copies all libraries to the stage directory
-func (b *ThemeBuilder) copyLibraries(stageDir string) error {
-	for _, lib := range b.Config.Libraries {
-		if !b.Quiet {
-			ui.PrintInfo("  Resolving library: %s", lib.Name)
-		}
-
-		// Resolve the library to a local path
-		libPath, err := config.ResolveLibrary(lib)
-		if err != nil {
-			return fmt.Errorf("failed to resolve library %s: %w", lib.Name, err)
-		}
-
-		// Copy to stage directory
-		if err := config.CopyLibraryToDir(libPath, stageDir, lib.Name); err != nil {
-			return fmt.Errorf("failed to copy library %s: %w", lib.Name, err)
-		}
-	}
-	return nil
+	return ExtractZip(tmpFile.Name(), destDir)
 }
