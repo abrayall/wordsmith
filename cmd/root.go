@@ -13,7 +13,12 @@ var Version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:   "wordsmith",
-	Short: "WordPress plugin build tool",
+	Short: "WordPress plugin, theme, and library build tool",
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if dir, err := os.Getwd(); err == nil {
+			upgradeClaudeSkill(dir)
+		}
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
@@ -27,7 +32,7 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.Long = ui.Divider() + "\n" + ui.Banner() + "\n" + ui.VersionLine(Version) + "\n\n" + ui.Divider() + "\n\nA CLI tool for building WordPress plugins and themes"
+	rootCmd.Long = ui.Divider() + "\n" + ui.Banner() + "\n" + ui.VersionLine(Version) + "\n\n" + ui.Divider() + "\n\nA CLI tool for building WordPress plugins, themes, and libraries"
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(initCmd)
 }

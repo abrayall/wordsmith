@@ -32,8 +32,13 @@ var deployCmd = &cobra.Command{
 
 		isTheme := config.ThemeExists(dir)
 		isPlugin := config.PluginExists(dir)
+		isLibrary := config.LibraryExists(dir)
 
 		if !isTheme && !isPlugin {
+			if isLibrary {
+				ui.PrintError("Libraries cannot be deployed directly to WordPress.")
+				os.Exit(1)
+			}
 			ui.PrintError("No plugin.properties or theme.properties found in current directory")
 			os.Exit(1)
 		}

@@ -271,6 +271,16 @@ func CopyLibraries(libraries []config.LibrarySpec, stageDir string, quiet bool) 
 			ui.PrintInfo("  Resolving library: %s", lib.Name)
 		}
 
+		// If it's a local directory with library.properties, build it first if needed
+		if config.IsLocalPath(lib.URL) {
+			path := lib.URL
+			if config.LibraryExists(path) {
+				if err := buildLibraryIfNeeded(path, quiet); err != nil {
+					return fmt.Errorf("failed to build library %s: %w", lib.Name, err)
+				}
+			}
+		}
+
 		// Resolve the library to a local path
 		libPath, err := config.ResolveLibrary(lib)
 		if err != nil {
@@ -283,6 +293,31 @@ func CopyLibraries(libraries []config.LibrarySpec, stageDir string, quiet bool) 
 		}
 	}
 	return nil
+}
+
+// buildLibraryIfNeeded builds a library project if no zip exists in its build directory
+func buildLibraryIfNeeded(path string, quiet bool) error {
+	buildDir := filepath.Join(path, "build")
+
+	// Check if a zip already exists
+	if _, err := os.Stat(buildDir); err == nil {
+		entries, err := os.ReadDir(buildDir)
+		if err == nil {
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), ".zip") {
+					return nil // Already built
+				}
+			}
+		}
+	}
+
+	// Need to build
+	if !quiet {
+		ui.PrintInfo("  Building library...")
+	}
+	b := NewLibraryBuilder(path)
+	b.Quiet = true
+	return b.Build()
 }
 
 // WriteVersionProperties writes version.properties file

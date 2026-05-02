@@ -21,12 +21,14 @@ var (
 	initThemeType   string
 	initTemplate    string
 	initTemplateURI string
+	initGit         bool
+	initClaude      bool
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init [plugin|theme]",
-	Short: "Initialize a new WordPress plugin or theme",
-	Long:  "Create a new plugin or theme with all necessary files and directories",
+	Use:   "init [plugin|theme|library]",
+	Short: "Initialize a new WordPress plugin, theme, or library",
+	Long:  "Create a new plugin, theme, or library with all necessary files and directories",
 	Run: func(cmd *cobra.Command, args []string) {
 		ui.PrintHeader(Version)
 
@@ -39,10 +41,11 @@ var initCmd = &cobra.Command{
 		// Determine type from args (default to plugin)
 		buildType := "plugin"
 		if len(args) > 0 {
-			if args[0] == "theme" {
-				buildType = "theme"
-			} else if args[0] != "plugin" {
-				ui.PrintError("Invalid type: %s (use 'plugin' or 'theme')", args[0])
+			switch args[0] {
+			case "plugin", "theme", "library":
+				buildType = args[0]
+			default:
+				ui.PrintError("Invalid type: %s (use 'plugin', 'theme', or 'library')", args[0])
 				os.Exit(1)
 			}
 		}
@@ -50,10 +53,31 @@ var initCmd = &cobra.Command{
 		// Check if any flags were provided (non-interactive mode)
 		interactive := initName == "" && initDescription == "" && initAuthor == "" && initAuthorURI == "" && initThemeType == ""
 
-		if buildType == "theme" {
-			initTheme(dir, interactive)
-		} else {
-			initPlugin(dir, interactive)
+		var projectDir string
+		switch buildType {
+		case "theme":
+			projectDir = initTheme(dir, interactive)
+		case "library":
+			projectDir = initLibrary(dir, interactive)
+		default:
+			projectDir = initPlugin(dir, interactive)
+		}
+
+		// Add git support if --git flag is set
+		if initGit {
+			addGitSupport(projectDir)
+		}
+
+		// Add Claude Code support if --claude flag is set
+		if initClaude {
+			created := addClaudeSupport(projectDir)
+			if len(created) > 0 {
+				ui.PrintInfo("Claude Code support added:")
+				for _, f := range created {
+					fmt.Printf("  • %s\n", f)
+				}
+				fmt.Println()
+			}
 		}
 	},
 }
@@ -66,9 +90,11 @@ func init() {
 	initCmd.Flags().StringVar(&initThemeType, "type", "", "Theme type: block, classic, hybrid, or child")
 	initCmd.Flags().StringVar(&initTemplate, "template", "", "Parent theme name (for child themes)")
 	initCmd.Flags().StringVar(&initTemplateURI, "template-uri", "", "Parent theme URL or path (for child themes)")
+	initCmd.Flags().BoolVarP(&initGit, "git", "g", false, "Generate GitHub Actions build workflow")
+	initCmd.Flags().BoolVarP(&initClaude, "claude", "c", false, "Generate Claude Code support files")
 }
 
-func initPlugin(dir string, interactive bool) {
+func initPlugin(dir string, interactive bool) string {
 	// Get default name from directory
 	defaultName := formatName(filepath.Base(dir))
 
@@ -216,9 +242,11 @@ func initPlugin(dir string, interactive bool) {
 	fmt.Println()
 	ui.PrintInfo("Run 'wordsmith build' to build your plugin")
 	fmt.Println()
+
+	return dir
 }
 
-func initTheme(dir string, interactive bool) {
+func initTheme(dir string, interactive bool) string {
 	// Get default name from directory
 	defaultName := formatName(filepath.Base(dir))
 
@@ -407,6 +435,8 @@ func initTheme(dir string, interactive bool) {
 	fmt.Println()
 	ui.PrintInfo("Run 'wordsmith build' to build your theme")
 	fmt.Println()
+
+	return dir
 }
 
 func generateBlockTheme(dir, name, description, author, authorURI, slug string) {
@@ -1375,6 +1405,88 @@ add_action('wp_enqueue_scripts', '%s_enqueue_scripts');
 		funcPrefix)
 
 	return content
+}
+
+func initLibrary(dir string, interactive bool) string {
+	// Get default name from directory
+	defaultName := formatName(filepath.Base(dir))
+
+	var name string
+
+	if interactive {
+		reader := bufio.NewReader(os.Stdin)
+
+		ui.PrintInfo("Let's set up your library!")
+		fmt.Println()
+
+		name = prompt(reader, "Library name", defaultName)
+
+		fmt.Println()
+	} else {
+		name = initName
+		if name == "" {
+			name = defaultName
+		}
+	}
+
+	// If current directory is not empty, create subdirectory
+	if !isEmptyDir(dir) {
+		slug := sanitizeName(name)
+		newDir := filepath.Join(dir, slug)
+		if err := os.MkdirAll(newDir, 0755); err != nil {
+			ui.PrintError("Failed to create directory %s: %v", slug, err)
+			os.Exit(1)
+		}
+		dir = newDir
+	}
+
+	// Check if library.properties already exists
+	if config.LibraryExists(dir) {
+		ui.PrintWarning("library.properties already exists")
+		os.Exit(1)
+	}
+
+	// Create library.properties
+	var props []string
+	props = append(props, "# Library Configuration")
+	props = append(props, "")
+	props = append(props, fmt.Sprintf("name=%s", name))
+	props = append(props, "")
+	props = append(props, "# Files to include (supports wildcards)")
+	props = append(props, "include=src")
+	props = append(props, "")
+	props = append(props, "# Files to exclude")
+	props = append(props, "exclude=node_modules,tests,.*")
+	props = append(props, "")
+
+	propsContent := strings.Join(props, "\n")
+	propsPath := filepath.Join(dir, "library.properties")
+	if err := os.WriteFile(propsPath, []byte(propsContent), 0644); err != nil {
+		ui.PrintError("Failed to create library.properties: %v", err)
+		os.Exit(1)
+	}
+
+	// Create src directory
+	srcDir := filepath.Join(dir, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		ui.PrintWarning("Failed to create directory src: %v", err)
+	}
+
+	// Create .gitignore
+	gitignoreContent := "build/\n"
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(gitignoreContent), 0644)
+
+	// Print success
+	ui.PrintSuccess("Created library: %s", name)
+	fmt.Println()
+	ui.PrintInfo("Files created:")
+	fmt.Printf("  • library.properties\n")
+	fmt.Printf("  • src/\n")
+	fmt.Println()
+	ui.PrintInfo("Run 'wordsmith build' to build your library")
+	fmt.Println()
+
+	return dir
 }
 
 func generateReadme(name, description, author, slug string) string {

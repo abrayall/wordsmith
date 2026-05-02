@@ -44,6 +44,9 @@ func (d *DockerBuilder) Build() error {
 	isPlugin := config.PluginExists(d.SourceDir)
 
 	if !d.IsTheme && !isPlugin {
+		if config.LibraryExists(d.SourceDir) {
+			return fmt.Errorf("libraries cannot be built as Docker images")
+		}
 		return fmt.Errorf("no plugin.properties or theme.properties found")
 	}
 

@@ -35,9 +35,10 @@ var watchCmd = &cobra.Command{
 
 		isTheme := config.ThemeExists(dir)
 		isPlugin := config.PluginExists(dir)
+		isLibrary := config.LibraryExists(dir)
 
-		if !isTheme && !isPlugin {
-			ui.PrintError("No plugin.properties or theme.properties found in current directory")
+		if !isTheme && !isPlugin && !isLibrary {
+			ui.PrintError("No plugin.properties, theme.properties, or library.properties found in current directory")
 			os.Exit(1)
 		}
 
@@ -54,7 +55,7 @@ var watchCmd = &cobra.Command{
 			mainFile = cfg.Main
 			includes = cfg.Include
 			propsFile = "theme.properties"
-		} else {
+		} else if isPlugin {
 			cfg, err := config.LoadPluginProperties(dir)
 			if err != nil {
 				ui.PrintError("Failed to load plugin.properties: %v", err)
@@ -63,6 +64,15 @@ var watchCmd = &cobra.Command{
 			mainFile = cfg.Main
 			includes = cfg.Include
 			propsFile = "plugin.properties"
+		} else {
+			cfg, err := config.LoadLibraryProperties(dir)
+			if err != nil {
+				ui.PrintError("Failed to load library.properties: %v", err)
+				os.Exit(1)
+			}
+			mainFile = ""
+			includes = cfg.Include
+			propsFile = "library.properties"
 		}
 
 		// Run initial build/deploy

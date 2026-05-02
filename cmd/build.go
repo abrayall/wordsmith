@@ -12,8 +12,8 @@ import (
 
 var buildCmd = &cobra.Command{
 	Use:   "build",
-	Short: "Build the WordPress plugin or theme",
-	Long:  "Build the WordPress plugin or theme from the current directory",
+	Short: "Build the WordPress plugin, theme, or library",
+	Long:  "Build the WordPress plugin, theme, or library from the current directory",
 	Run: func(cmd *cobra.Command, args []string) {
 		quiet, _ := cmd.Flags().GetBool("quiet")
 		if !quiet {
@@ -26,13 +26,14 @@ var buildCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Check for theme.properties first, then plugin.properties
+		// Check for theme.properties first, then plugin.properties, then library.properties
 		isTheme := config.ThemeExists(dir)
 		isPlugin := config.PluginExists(dir)
+		isLibrary := config.LibraryExists(dir)
 
-		if !isTheme && !isPlugin {
-			ui.PrintError("No plugin.properties or theme.properties found in current directory")
-			ui.PrintInfo("Run 'wordsmith init plugin' or 'wordsmith init theme' to create one")
+		if !isTheme && !isPlugin && !isLibrary {
+			ui.PrintError("No plugin.properties, theme.properties, or library.properties found in current directory")
+			ui.PrintInfo("Run 'wordsmith init plugin', 'wordsmith init theme', or 'wordsmith init library' to create one")
 			os.Exit(1)
 		}
 
@@ -57,7 +58,7 @@ var buildCmd = &cobra.Command{
 				ui.PrintInfo("Appearance → Themes → Add New → Upload Theme")
 				fmt.Println()
 			}
-		} else {
+		} else if isPlugin {
 			// Build plugin
 			b := builder.New(dir)
 			b.Quiet = quiet
@@ -76,6 +77,24 @@ var buildCmd = &cobra.Command{
 				fmt.Println()
 				ui.PrintInfo("Upload the ZIP file to WordPress via:")
 				ui.PrintInfo("Plugins → Add New → Upload Plugin")
+				fmt.Println()
+			}
+		} else {
+			// Build library
+			b := builder.NewLibraryBuilder(dir)
+			b.Quiet = quiet
+			if err := b.Build(); err != nil {
+				ui.PrintError("Build failed: %v", err)
+				os.Exit(1)
+			}
+
+			if quiet {
+				ui.PrintSuccess("Build complete!")
+			} else {
+				fmt.Println()
+				fmt.Println(ui.Divider())
+				fmt.Println()
+				ui.PrintSuccess("Build complete!")
 				fmt.Println()
 			}
 		}
